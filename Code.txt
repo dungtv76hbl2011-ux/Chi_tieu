@@ -1,0 +1,2613 @@
+// ================================
+// CODE.GS - BACKEND GOOGLE APPS SCRIPT (FIXED VERSION)
+// Ứng dụng Quản lý Chi tiêu Cá nhân
+// ================================
+
+// ========== CẤU HÌNH GLOBAL ==========
+const CONFIG = {
+  SPREADSHEET_ID: null,
+  SHEET_NAMES: {
+    INCOME: 'Thu nhập',
+    EXPENSE: 'Chi tiêu',
+    INVESTMENT: 'Đầu tư',
+    LOAN: 'Khoản vay',
+    BUDGET: 'Ngân sách',
+    THIRD_PARTY: 'Thu chi hộ',
+    USERS: 'Người dùng',
+    ACCOUNTS: 'Tài khoản',
+    AI_CHAT: 'Ai_chat_history',
+    NOTIFICATIONS: 'NOTIFICATIONS',
+    AUDIT_LOG: 'AUDIT_LOG',
+    SETTINGS: 'Cài đặt'
+  },
+  SESSION_TIMEOUT: 24 * 60 * 60 * 1000
+};
+
+// ========== KHỞI TẠO SPREADSHEET ==========
+function getSpreadsheet() {
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function getSheet(sheetName) {
+  return getSpreadsheet().getSheetByName(sheetName);
+}
+
+// ========== HELPER FUNCTION ==========
+function getOrCreateSheet(ss, sheetName) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+  } else {
+    sheet.clear();
+  }
+  return sheet;
+}
+
+// ========== HÀM KHỞI TẠO DỮ LIỆU MẪU ==========
+function initializeSampleData() {
+  const ss = getSpreadsheet();
+  
+  Logger.log('Bắt đầu khởi tạo dữ liệu...');
+  
+  createOrUpdateUsersSheet(ss);
+  createOrUpdateAccountsSheet(ss);
+  createOrUpdateIncomeSheet(ss);
+  createOrUpdateExpenseSheet(ss);
+  createOrUpdateBudgetSheet(ss);
+  createOrUpdateLoanSheet(ss);
+  createOrUpdateInvestmentSheet(ss);
+  createOrUpdateThirdPartySheet(ss);
+  createOrUpdateAiChatSheet(ss);
+  createOrUpdateNotificationsSheet(ss);
+  createOrUpdateAuditLogSheet(ss);
+  createOrUpdateSettingsSheet(ss);
+  
+  Logger.log('✅ Khởi tạo dữ liệu mẫu thành công!');
+  return { success: true, message: 'Dữ liệu mẫu đã được tạo' };
+}
+
+// ========== AUTHENTICATION ==========
+function hashPassword(password) {
+  const hash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, password);
+  return Utilities.base64Encode(hash);
+}
+
+function doLogin(username, password) {
+  try {
+    Logger.log('=== BACKEND LOGIN START ===');
+    Logger.log('Username: "' + username + '"');
+    Logger.log('Password: "' + password + '"');
+    Logger.log('Password length: ' + password.length);
+    
+    // Trim whitespace
+    username = username.trim();
+    password = password.trim();
+    
+    Logger.log('After trim:');
+    Logger.log('Username: "' + username + '"');
+    Logger.log('Password: "' + password + '"');
+    
+    const sheet = getSheet(CONFIG.SHEET_NAMES.USERS);
+    if (!sheet) {
+      Logger.log('❌ Sheet Người dùng không tồn tại');
+      return { success: false, message: 'Sheet Người dùng không tồn tại' };
+    }
+    
+    Logger.log('✓ Sheet found');
+    
+    const data = sheet.getDataRange().getValues();
+    Logger.log('Total rows: ' + data.length);
+    
+    const hashedPassword = hashPassword(password);
+    Logger.log('Input password hash: ' + hashedPassword);
+    
+    for (let i = 1; i < data.length; i++) {
+      var rowUsername = data[i][1];
+      var rowPassword = data[i][2];
+      var rowStatus = data[i][6];
+      
+      Logger.log('');
+      Logger.log('--- Row ' + i + ' ---');
+      Logger.log('Username: "' + rowUsername + '"');
+      Logger.log('Status: ' + rowStatus);
+      
+      if (rowUsername === username) {
+        Logger.log('✓ Username MATCH!');
+        Logger.log('Stored hash: ' + rowPassword);
+        Logger.log('Input hash:  ' + hashedPassword);
+        Logger.log('Hash match: ' + (rowPassword === hashedPassword));
+        
+        if (rowPassword === hashedPassword) {
+          Logger.log('✓ Password MATCH!');
+          
+          if (rowStatus !== 'Active') {
+            Logger.log('❌ Account inactive: ' + rowStatus);
+            return { success: false, message: 'Tài khoản đã bị khóa' };
+          }
+          
+          Logger.log('✓ Account is ACTIVE');
+          
+          const sessionToken = Utilities.getUuid();
+          const userSession = {
+            userId: data[i][0],
+            username: data[i][1],
+            fullName: data[i][3],
+            email: data[i][4],
+            role: data[i][5],
+            token: sessionToken,
+            loginTime: new Date().getTime()
+          };
+          
+          PropertiesService.getUserProperties().setProperty('session', JSON.stringify(userSession));
+          addAuditLog(data[i][0], 'login', 'auth', 'LOGIN', { username: username });
+          
+          Logger.log('✅ LOGIN SUCCESS!');
+          Logger.log('Session: ' + JSON.stringify(userSession));
+          
+          return { success: true, data: userSession };
+        } else {
+          Logger.log('❌ Password MISMATCH!');
+        }
+      }
+    }
+    
+    Logger.log('');
+    Logger.log('❌ No matching user found');
+    return { success: false, message: 'Tên đăng nhập hoặc mật khẩu không đúng' };
+    
+  } catch (error) {
+    Logger.log('❌ ERROR: ' + error.toString());
+    Logger.log('Stack: ' + error.stack);
+    return { success: false, message: 'Lỗi đăng nhập: ' + error.toString() };
+  }
+}
+
+function doLogout() {
+  try {
+    const session = getCurrentSession();
+    if (session) {
+      addAuditLog(session.userId, 'logout', 'auth', 'LOGOUT', {});
+      PropertiesService.getUserProperties().deleteProperty('session');
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: error.toString() };
+  }
+}
+
+function getCurrentSession() {
+  try {
+    const sessionStr = PropertiesService.getUserProperties().getProperty('session');
+    if (!sessionStr) return null;
+    
+    const session = JSON.parse(sessionStr);
+    const now = new Date().getTime();
+    
+    if (now - session.loginTime > CONFIG.SESSION_TIMEOUT) {
+      PropertiesService.getUserProperties().deleteProperty('session');
+      return null;
+    }
+    
+    return session;
+  } catch (error) {
+    Logger.log('Session error: ' + error.toString());
+    return null;
+  }
+}
+
+// ========== AUDIT LOG ==========
+function addAuditLog(userId, action, resource, resourceId, details) {
+  try {
+    const sheet = getSheet(CONFIG.SHEET_NAMES.AUDIT_LOG);
+    if (!sheet) return;
+    
+    const logId = 'LOG' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMddHHmmss');
+    
+    sheet.appendRow([
+      logId,
+      new Date(),
+      userId,
+      action,
+      resource,
+      resourceId,
+      JSON.stringify(details)
+    ]);
+  } catch (e) {
+    Logger.log('Audit log error: ' + e.toString());
+  }
+}
+
+// ========== CRUD OPERATIONS ==========
+function getAllData(sheetName, userId, userRole) {
+  try {
+    const sheet = getSheet(sheetName);
+    if (!sheet) {
+      Logger.log('Sheet not found: ' + sheetName);
+      return { success: false, message: 'Sheet không tồn tại: ' + sheetName, data: [] };
+    }
+    
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    
+    Logger.log('Sheet "' + sheetName + '" - LastRow: ' + lastRow + ', LastCol: ' + lastCol);
+    
+    if (lastRow <= 1 || lastCol === 0) {
+      Logger.log('Sheet "' + sheetName + '" is empty');
+      return { success: true, data: [] };
+    }
+    
+    const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+    const headers = data[0];
+    
+    Logger.log('Headers: ' + JSON.stringify(headers));
+    
+    // Tìm index của cột UserID (dùng vòng lặp thay vì findIndex)
+    var userIdIndex = -1;
+    for (var h = 0; h < headers.length; h++) {
+      if (headers[h] === 'UserID' || headers[h] === 'userID' || headers[h] === 'UserId') {
+        userIdIndex = h;
+        break;
+      }
+    }
+    
+    Logger.log('UserID column index: ' + userIdIndex);
+    Logger.log('Current user role: ' + userRole + ', userId: ' + userId);
+    
+    const shouldFilter = (userRole !== 'Admin') && (userIdIndex >= 0);
+    Logger.log('Should filter by UserID: ' + shouldFilter);
+    
+    const rows = data.slice(1);
+    const result = [];
+    
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      
+      // Bỏ qua dòng trống
+      var isEmpty = true;
+      for (var j = 0; j < row.length; j++) {
+        if (row[j] !== '' && row[j] !== null && row[j] !== undefined) {
+          isEmpty = false;
+          break;
+        }
+      }
+      
+      if (isEmpty) continue;
+      
+      // Filter theo UserID nếu cần
+      if (shouldFilter) {
+        var rowUserId = row[userIdIndex];
+        if (rowUserId !== userId) continue;
+      }
+      
+      // Tạo object từ row
+      var obj = {};
+      for (var k = 0; k < headers.length; k++) {
+        var header = headers[k];
+        var value = row[k];
+        
+        // Xử lý date
+        if (header === 'Ngày' || header === 'Ngày vay' || header === 'Ngày đầu tư' || header === 'Hạn trả vay') {
+          if (value instanceof Date) {
+            obj[header] = Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+          } else if (value) {
+            obj[header] = value.toString();
+          } else {
+            obj[header] = '';
+          }
+        } else {
+          obj[header] = value;
+        }
+      }
+      
+      result.push(obj);
+    }
+    
+    Logger.log('Filtered result for "' + sheetName + '": ' + result.length + ' records');
+    if (result.length > 0) {
+      Logger.log('Sample data: ' + JSON.stringify(result[0]));
+    }
+    
+    return { success: true, data: result };
+    
+  } catch (error) {
+    Logger.log('getAllData error for "' + sheetName + '": ' + error.toString());
+    return { success: false, message: error.toString(), data: [] };
+  }
+}
+
+function createRecord(sheetName, data, userId) {
+  try {
+    const sheet = getSheet(sheetName);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const newRow = headers.map(header => data[header] || '');
+    
+    sheet.appendRow(newRow);
+    addAuditLog(userId, 'create', sheetName, data.ID || data.id, data);
+    
+    // ===== THÊM DÒNG NÀY =====
+    // Auto-update budget if this is an expense
+    if (sheetName === CONFIG.SHEET_NAMES.EXPENSE && data['Ngày']) {
+      triggerBudgetUpdate(data['Ngày']);
+    }
+    // ===== KẾT THÚC PHẦN THÊM =====
+    
+    return { success: true, message: 'Tạo thành công', data: data };
+  } catch (error) {
+    Logger.log('createRecord error: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+function updateRecord(sheetName, id, data, userId) {
+  try {
+    const sheet = getSheet(sheetName);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    const allData = sheet.getDataRange().getValues();
+    const headers = allData[0];
+    const idIndex = headers.indexOf('ID') >= 0 ? headers.indexOf('ID') : headers.indexOf('AccountID');
+    
+    for (let i = 1; i < allData.length; i++) {
+      if (allData[i][idIndex] === id) {
+        headers.forEach((header, index) => {
+          if (data[header] !== undefined) {
+            sheet.getRange(i + 1, index + 1).setValue(data[header]);
+          }
+        });
+        
+        addAuditLog(userId, 'update', sheetName, id, data);
+        
+        // ===== THÊM DÒNG NÀY =====
+        // Auto-update budget if this is an expense
+        if (sheetName === CONFIG.SHEET_NAMES.EXPENSE && data['Ngày']) {
+          triggerBudgetUpdate(data['Ngày']);
+        }
+        // ===== KẾT THÚC PHẦN THÊM =====
+        
+        return { success: true, message: 'Cập nhật thành công' };
+      }
+    }
+    
+    return { success: false, message: 'Không tìm thấy bản ghi' };
+  } catch (error) {
+    Logger.log('updateRecord error: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+function deleteRecord(sheetName, id, userId) {
+  try {
+    const sheet = getSheet(sheetName);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    const allData = sheet.getDataRange().getValues();
+    const headers = allData[0];
+    const idIndex = headers.indexOf('ID') >= 0 ? headers.indexOf('ID') : headers.indexOf('AccountID');
+    
+    // ===== THÊM DÒNG NÀY =====
+    var expenseDate = null;
+    if (sheetName === CONFIG.SHEET_NAMES.EXPENSE) {
+      var dateIndex = headers.indexOf('Ngày');
+      for (let i = 1; i < allData.length; i++) {
+        if (allData[i][idIndex] === id) {
+          expenseDate = allData[i][dateIndex];
+          break;
+        }
+      }
+    }
+    // ===== KẾT THÚC PHẦN THÊM =====
+    
+    for (let i = 1; i < allData.length; i++) {
+      if (allData[i][idIndex] === id) {
+        sheet.deleteRow(i + 1);
+        addAuditLog(userId, 'delete', sheetName, id, {});
+        
+        // ===== THÊM DÒNG NÀY =====
+        // Auto-update budget if this was an expense
+        if (sheetName === CONFIG.SHEET_NAMES.EXPENSE && expenseDate) {
+          triggerBudgetUpdate(expenseDate);
+        }
+        // ===== KẾT THÚC PHẦN THÊM =====
+        
+        return { success: true, message: 'Xóa thành công' };
+      }
+    }
+    
+    return { success: false, message: 'Không tìm thấy bản ghi' };
+  } catch (error) {
+    Logger.log('deleteRecord error: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+// ========== ACCOUNT BALANCE ==========
+function getAccountBalance(accountId) {
+  try {
+    const sheet = getSheet(CONFIG.SHEET_NAMES.ACCOUNTS);
+    const data = sheet.getDataRange().getValues();
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === accountId) {
+        return {
+          success: true,
+          balance: data[i][5],
+          accountName: data[i][3]
+        };
+      }
+    }
+    
+    return { success: false, message: 'Tài khoản không tồn tại' };
+  } catch (error) {
+    return { success: false, message: error.toString() };
+  }
+}
+
+function updateAccountBalance(accountId, amount, type) {
+  try {
+    const sheet = getSheet(CONFIG.SHEET_NAMES.ACCOUNTS);
+    if (!sheet) {
+      return { success: false, message: 'Sheet Tài khoản không tồn tại' };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    // Tìm index các cột
+    var accountIdIndex = -1;
+    var currentBalanceIndex = -1;
+    
+    for (var h = 0; h < headers.length; h++) {
+      if (headers[h] === 'AccountID' || headers[h] === 'accountID') {
+        accountIdIndex = h;
+      }
+      if (headers[h] === 'Số dư hiện tại') {
+        currentBalanceIndex = h;
+      }
+    }
+    
+    Logger.log('Updating account balance - AccountID: ' + accountId + ', Amount: ' + amount + ', Type: ' + type);
+    Logger.log('AccountID column index: ' + accountIdIndex);
+    Logger.log('Current balance column index: ' + currentBalanceIndex);
+    
+    if (accountIdIndex < 0 || currentBalanceIndex < 0) {
+      return { success: false, message: 'Không tìm thấy cột cần thiết' };
+    }
+    
+    // Tìm và cập nhật tài khoản
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][accountIdIndex] === accountId) {
+        var currentBalance = parseFloat(data[i][currentBalanceIndex]) || 0;
+        var newBalance;
+        
+        if (type === 'add') {
+          newBalance = currentBalance + parseFloat(amount);
+        } else if (type === 'subtract') {
+          if (currentBalance < parseFloat(amount)) {
+            return { success: false, message: 'Số dư không đủ' };
+          }
+          newBalance = currentBalance - parseFloat(amount);
+        } else {
+          return { success: false, message: 'Type không hợp lệ: ' + type };
+        }
+        
+        Logger.log('Old balance: ' + currentBalance + ', New balance: ' + newBalance);
+        
+        // Cập nhật vào sheet
+        sheet.getRange(i + 1, currentBalanceIndex + 1).setValue(newBalance);
+        
+        Logger.log('✅ Balance updated successfully for account: ' + accountId);
+        
+        return { 
+          success: true, 
+          newBalance: newBalance,
+          message: 'Cập nhật số dư thành công'
+        };
+      }
+    }
+    
+    Logger.log('❌ Account not found: ' + accountId);
+    return { success: false, message: 'Tài khoản không tồn tại' };
+    
+  } catch (error) {
+    Logger.log('Error in updateAccountBalance: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+// ========== WEB APP ENTRY POINT ==========
+function doGet() {
+  return HtmlService.createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle('Quản lý Chi tiêu Cá nhân')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+// ========== API ENDPOINTS ==========
+function handleRequest(action, params) {
+  try {
+    Logger.log('=== HANDLE REQUEST ===');
+    Logger.log('Action: ' + action);
+    Logger.log('Params: ' + JSON.stringify(params));
+    
+    const session = getCurrentSession();
+    
+    if (action === 'login') {
+      Logger.log('→ Routing to doLogin()');
+      var result = doLogin(params.username, params.password);
+      Logger.log('→ doLogin() result: ' + JSON.stringify(result));
+      return result;
+    }
+    
+    if (!session) {
+      return { success: false, message: 'Phiên đăng nhập đã hết hạn' };
+    }
+    
+    switch (action) {
+      case 'logout':
+        return doLogout();
+      
+      case 'getSession':
+        return { success: true, data: session };
+      
+      case 'getAllData':
+        return getAllData(params.sheetName, session.userId, session.role);
+      
+      case 'createRecord':
+        return createRecord(params.sheetName, params.data, session.userId);
+      
+      case 'updateRecord':
+        return updateRecord(params.sheetName, params.id, params.data, session.userId);
+      
+      case 'deleteRecord':
+        return deleteRecord(params.sheetName, params.id, session.userId);
+      
+      case 'getAccountBalance':
+        return getAccountBalance(params.accountId);
+      
+      case 'updateAccountBalance':
+        return updateAccountBalance(params.accountId, params.amount, params.type);
+
+      case 'transferMoney':
+        return transferMoney(params.fromAccountId, params.toAccountId, params.amount, params.description);
+      
+      case 'calculateBudgetSpent':
+        return calculateBudgetSpent(params.budgetId, params.month);
+
+      case 'updateAllBudgets':
+        return updateAllBudgets(params.month);
+      
+      case 'getMainCategories':
+        return getMainCategories(params.type, session.userId);
+      
+      case 'getSubcategories':
+        return getSubcategories(params.parentId, session.userId);
+      
+      case 'getAllCategoriesByType':
+        return getAllCategoriesByType(params.type, params.userId || session.userId);
+
+
+      case 'getCategoryDetails':
+        return { success: true, data: getCategoryDetails(params.categoryId) };
+      
+      // ===== THÊM CÁC ACTION MỚI CHO LOAN =====
+      case 'calculateLoanSchedule':
+        return { success: true, data: calculateLoanSchedule(params.loanData) };
+      
+      case 'markLoanPaymentAsPaid':
+        return markLoanPaymentAsPaid(params.loanId, params.period);
+      
+      case 'getLoanNotifications':
+        return { success: true, data: getLoanNotifications(params.daysBeforeDue) };
+      // ===== KẾT THÚC PHẦN THÊM =====
+
+      default:
+        return { success: false, message: 'Action không hợp lệ: ' + action };
+    }
+  } catch (error) {
+    Logger.log('Error in handleRequest: ' + error.toString());
+    return { 
+      success: false, 
+      message: 'Lỗi server: ' + error.toString() 
+    };
+  }
+}
+
+// ========== CREATE SHEETS FUNCTIONS ==========
+function createOrUpdateUsersSheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.USERS);
+  const headers = ['UserID', 'Tên đăng nhập', 'Mật khẩu', 'Họ và tên', 'Email', 'Quyền', 'Tình trạng', 'userMetadata'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  
+  const sampleData = [
+    ['USR001', 'admin', hashPassword('admin123'), 'Nguyễn Văn A', 'admin@example.com', 'Admin', 'Active', JSON.stringify({ phone: '0901234567', lastLogin: new Date().toISOString() })],
+    ['USR002', 'user1', hashPassword('user123'), 'Trần Thị B', 'user1@example.com', 'User', 'Active', JSON.stringify({ phone: '0912345678', lastLogin: new Date().toISOString() })]
+  ];
+  
+  sheet.getRange(2, 1, sampleData.length, headers.length).setValues(sampleData);
+  sheet.autoResizeColumns(1, headers.length);
+  Logger.log('✓ Sheet Người dùng');
+}
+
+function createOrUpdateAccountsSheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.ACCOUNTS);
+  const headers = ['AccountID', 'UserID', 'Loại', 'Tên tài khoản', 'Số dư đầu kỳ', 'Số dư hiện tại', 'Metadata'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  
+  const sampleData = [
+    ['ACC001', 'USR001', 'Tiền mặt', 'Tiền mặt', 5000000, 5000000, JSON.stringify({ currency: 'VND' })],
+    ['ACC002', 'USR001', 'Ngân hàng', 'ACB', 20000000, 20000000, JSON.stringify({ accountNumber: '123456789' })],
+    ['ACC003', 'USR001', 'Ngân hàng', 'VCB', 15000000, 15000000, JSON.stringify({ accountNumber: '987654321' })],
+    ['ACC004', 'USR001', 'Ví điện tử', 'Momo', 3000000, 3000000, JSON.stringify({ phone: '0901234567' })]
+  ];
+  
+  sheet.getRange(2, 1, sampleData.length, headers.length).setValues(sampleData);
+  sheet.autoResizeColumns(1, headers.length);
+  Logger.log('✓ Sheet Tài khoản');
+}
+
+function createOrUpdateIncomeSheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.INCOME);
+  const headers = ['ID', 'Ngày', 'Danh mục thu nhập', 'Số tiền', 'Mô tả', 'Phương thức thanh toán', 'UserID', 'Metadata'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  
+  const sampleData = [
+    ['TN00001', '2025-10-01', JSON.stringify([{ id: 'salary', name: 'Lương' }]), 15000000, 'Lương tháng 10/2025', JSON.stringify([{ id: 'ACC002', name: 'ACB' }]), 'USR001', JSON.stringify({ accountId: 'ACC002' })]
+  ];
+  
+  sheet.getRange(2, 1, sampleData.length, headers.length).setValues(sampleData);
+  sheet.autoResizeColumns(1, headers.length);
+  Logger.log('✓ Sheet Thu nhập');
+}
+
+function createOrUpdateExpenseSheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.EXPENSE);
+  const headers = ['ID', 'Ngày', 'Danh mục chi tiêu', 'Số tiền', 'Mô tả', 'Phương thức thanh toán', 'UserID', 'Metadata'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  
+  const sampleData = [
+    ['CT00001', '2025-10-14', JSON.stringify([{ id: 'food', name: 'Ăn uống' }]), 150000, 'Ăn trưa', JSON.stringify([{ id: 'ACC001', name: 'Tiền mặt' }]), 'USR001', JSON.stringify({ accountId: 'ACC001' })]
+  ];
+  
+  sheet.getRange(2, 1, sampleData.length, headers.length).setValues(sampleData);
+  sheet.autoResizeColumns(1, headers.length);
+  Logger.log('✓ Sheet Chi tiêu');
+}
+
+function createOrUpdateBudgetSheet(ss) {
+  var sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.BUDGET);
+  var headers = ['ID', 'UserID', 'Tháng', 'Danh mục ID', 'Kế hoạch', 'Chi tiêu', 'Chênh lệch', 'Metadata'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  
+  var sampleData = [
+    [
+      'NS00001',
+      'USR001',
+      '2025-10',
+      JSON.stringify([{id: 'food', name: 'Ăn uống', subcategory: 'Ăn sáng'}]),
+      5000000,
+      3200000,
+      3200000 / 5000000,
+      JSON.stringify({
+        categoryName: 'Ăn uống',
+        remaining: 1800000,
+        percentage: 64,
+        status: 'on-track',
+        alerts: [],
+        history: [{date: '2025-10-01', spent: 0}, {date: '2025-10-14', spent: 3200000}]
+      })
+    ],
+    [
+      'NS00002',
+      'USR001',
+      '2025-10',
+      JSON.stringify([{id: 'transport', name: 'Di chuyển', subcategory: 'Xăng xe'}]),
+      2000000,
+      1500000,
+      1500000 / 2000000,
+      JSON.stringify({
+        categoryName: 'Di chuyển',
+        remaining: 500000,
+        percentage: 75,
+        status: 'on-track',
+        alerts: [],
+        history: []
+      })
+    ],
+    [
+      'NS00003',
+      'USR001',
+      '2025-10',
+      JSON.stringify([{id: 'shopping', name: 'Mua sắm', subcategory: 'Quần áo'}]),
+      3000000,
+      2800000,
+      2800000 / 3000000,
+      JSON.stringify({
+        categoryName: 'Mua sắm',
+        remaining: 200000,
+        percentage: 93,
+        status: 'warning',
+        alerts: ['Sắp vượt ngân sách'],
+        history: []
+      })
+    ]
+  ];
+  
+  sheet.getRange(2, 1, sampleData.length, headers.length).setValues(sampleData);
+  sheet.autoResizeColumns(1, headers.length);
+  Logger.log('✔ Sheet Ngân sách');
+}
+
+function createOrUpdateLoanSheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.LOAN);
+  const headers = ['ID', 'UserID', 'Ngày vay', 'Hạn trả vay', 'Danh mục vay', 'Giá trị vay', 'Lãi suất vay/năm', 'Tiền gốc trả hàng tháng', 'Tiền lãi trả hàng tháng', 'Tiền gốc đã trả', 'Tiền vay còn lại', 'Tình trạng', 'Chi tiết khoản vay'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  Logger.log('✓ Sheet Khoản vay');
+}
+
+function createOrUpdateInvestmentSheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.INVESTMENT);
+  const headers = ['ID', 'UserID', 'Ngày đầu tư', 'Danh mục đầu tư', 'Giá trị đầu tư', 'Vốn tự có', 'Vốn vay', 'Giá trị hiện tại', 'Kết quả đầu tư', 'Tình trạng', 'Chi tiết đầu tư'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  Logger.log('✓ Sheet Đầu tư');
+}
+
+function createOrUpdateThirdPartySheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.THIRD_PARTY);
+  const headers = ['ID', 'UserID', 'Ngày', 'Dạng', 'Số tiền', 'Nội dung', 'Chi tiết'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  Logger.log('✓ Sheet Thu chi hộ');
+}
+
+function createOrUpdateAiChatSheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.AI_CHAT);
+  const headers = ['chatID', 'userID', 'Thời gian', 'chatData'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  Logger.log('✓ Sheet AI Chat');
+}
+
+function createOrUpdateNotificationsSheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.NOTIFICATIONS);
+  const headers = ['notificationId', 'userId', 'type', 'notificationData'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  Logger.log('✓ Sheet Notifications');
+}
+
+function createOrUpdateAuditLogSheet(ss) {
+  const sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.AUDIT_LOG);
+  const headers = ['logId', 'Thời gian', 'userId', 'action', 'resource', 'resourceId', 'logDetails'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#f3f4f6');
+  Logger.log('✓ Sheet Audit Log');
+}
+
+function createOrUpdateSettingsSheet(ss) {
+  var sheet = getOrCreateSheet(ss, CONFIG.SHEET_NAMES.SETTINGS);
+  
+  // New structure with Category Management
+  var headers = [
+    'ID', 
+    'Type', 
+    'ParentID', 
+    'Name', 
+    'Icon', 
+    'Color', 
+    'UserID', 
+    'Status', 
+    'SortOrder',
+    'CreatedAt',
+    'UpdatedAt'
+  ];
+  
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#f3f4f6');
+  
+  // Seed data - Expense Categories
+  var sampleData = [
+    // Expense Categories - Main
+    ['CAT_EXP_001', 'expense', null, 'Ăn uống', '🍔', '#e94849', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_EXP_002', 'expense', 'CAT_EXP_001', 'Ăn sáng', '', '', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_EXP_003', 'expense', 'CAT_EXP_001', 'Ăn trưa', '', '', 'USR001', 'active', 2, new Date(), new Date()],
+    ['CAT_EXP_004', 'expense', 'CAT_EXP_001', 'Ăn tối', '', '', 'USR001', 'active', 3, new Date(), new Date()],
+    ['CAT_EXP_005', 'expense', 'CAT_EXP_001', 'Ăn vặt', '', '', 'USR001', 'active', 4, new Date(), new Date()],
+    
+    ['CAT_EXP_006', 'expense', null, 'Di chuyển', '🚗', '#3782f4', 'USR001', 'active', 2, new Date(), new Date()],
+    ['CAT_EXP_007', 'expense', 'CAT_EXP_006', 'Xăng xe', '', '', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_EXP_008', 'expense', 'CAT_EXP_006', 'Taxi/Grab', '', '', 'USR001', 'active', 2, new Date(), new Date()],
+    ['CAT_EXP_009', 'expense', 'CAT_EXP_006', 'Bảo dưỡng xe', '', '', 'USR001', 'active', 3, new Date(), new Date()],
+    
+    ['CAT_EXP_010', 'expense', null, 'Mua sắm', '🛒', '#f59e0b', 'USR001', 'active', 3, new Date(), new Date()],
+    ['CAT_EXP_011', 'expense', 'CAT_EXP_010', 'Quần áo', '', '', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_EXP_012', 'expense', 'CAT_EXP_010', 'Mỹ phẩm', '', '', 'USR001', 'active', 2, new Date(), new Date()],
+    ['CAT_EXP_013', 'expense', 'CAT_EXP_010', 'Điện tử', '', '', 'USR001', 'active', 3, new Date(), new Date()],
+    
+    ['CAT_EXP_014', 'expense', null, 'Học tập', '📚', '#8b5cf6', 'USR001', 'active', 4, new Date(), new Date()],
+    ['CAT_EXP_015', 'expense', 'CAT_EXP_014', 'Học phí', '', '', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_EXP_016', 'expense', 'CAT_EXP_014', 'Sách vở', '', '', 'USR001', 'active', 2, new Date(), new Date()],
+    
+    ['CAT_EXP_017', 'expense', null, 'Y tế', '⚕️', '#10b981', 'USR001', 'active', 5, new Date(), new Date()],
+    ['CAT_EXP_018', 'expense', 'CAT_EXP_017', 'Khám bệnh', '', '', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_EXP_019', 'expense', 'CAT_EXP_017', 'Thuốc men', '', '', 'USR001', 'active', 2, new Date(), new Date()],
+    
+    ['CAT_EXP_020', 'expense', null, 'Giải trí', '🎮', '#ec4899', 'USR001', 'active', 6, new Date(), new Date()],
+    ['CAT_EXP_021', 'expense', 'CAT_EXP_020', 'Phim ảnh', '', '', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_EXP_022', 'expense', 'CAT_EXP_020', 'Du lịch', '', '', 'USR001', 'active', 2, new Date(), new Date()],
+    
+    ['CAT_EXP_023', 'expense', null, 'Khác', '📦', '#6b7280', 'USR001', 'active', 7, new Date(), new Date()],
+    
+    // Income Categories - Main
+    ['CAT_INC_001', 'income', null, 'Lương', '💰', '#24c560', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_INC_002', 'income', 'CAT_INC_001', 'Lương cơ bản', '', '', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_INC_003', 'income', 'CAT_INC_001', 'Lương thưởng', '', '', 'USR001', 'active', 2, new Date(), new Date()],
+    
+    ['CAT_INC_004', 'income', null, 'Đầu tư', '📈', '#3782f4', 'USR001', 'active', 2, new Date(), new Date()],
+    ['CAT_INC_005', 'income', 'CAT_INC_004', 'Cổ tức', '', '', 'USR001', 'active', 1, new Date(), new Date()],
+    ['CAT_INC_006', 'income', 'CAT_INC_004', 'Lãi suất', '', '', 'USR001', 'active', 2, new Date(), new Date()],
+    
+    ['CAT_INC_007', 'income', null, 'Thưởng', '🎁', '#f59e0b', 'USR001', 'active', 3, new Date(), new Date()],
+    ['CAT_INC_008', 'income', null, 'Khác', '📦', '#6b7280', 'USR001', 'active', 4, new Date(), new Date()]
+  ];
+  
+  if (sheet.getLastRow() === 1) {
+    sheet.getRange(2, 1, sampleData.length, headers.length).setValues(sampleData);
+  }
+  
+  sheet.autoResizeColumns(1, headers.length);
+  Logger.log('✔ Sheet Cài đặt (Category Management)');
+}
+
+// ========== DEBUG FUNCTIONS ==========
+function testLogin() {
+  var result = doLogin('admin', 'admin123');
+  Logger.log('Login result: ');
+  Logger.log(result);
+  return result;
+}
+
+function checkSheets() {
+  var ss = getSpreadsheet();
+  var sheets = ss.getSheets();
+  
+  Logger.log('Available sheets:');
+  sheets.forEach(function(sheet) {
+    Logger.log('- ' + sheet.getName());
+  });
+}
+
+function testGetAllDataDebug() {
+  var result = getAllData('Thu nhập', 'USR001', 'Admin');
+  Logger.log('=== TEST RESULT ===');
+  Logger.log('Success: ' + result.success);
+  Logger.log('Data count: ' + result.data.length);
+  Logger.log('Data: ' + JSON.stringify(result.data));
+}
+
+// ========== HELPER: GENERATE PASSWORD HASH ==========
+function generatePasswordHash() {
+  var password = 'admin123@'; // Đổi mật khẩu tại đây
+  var hash = hashPassword(password);
+  
+  Logger.log('======================');
+  Logger.log('Plain password: ' + password);
+  Logger.log('Hashed password: ' + hash);
+  Logger.log('======================');
+  
+  return {
+    plainPassword: password,
+    hashedPassword: hash
+  };
+}
+
+// ========== RESET PASSWORD FOR USER ==========
+function resetUserPassword() {
+  var username = 'admin'; // Username cần reset
+  var newPassword = 'admin123@'; // Mật khẩu mới
+  
+  try {
+    var sheet = getSheet(CONFIG.SHEET_NAMES.USERS);
+    if (!sheet) {
+      Logger.log('Sheet Người dùng không tồn tại');
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    var hashedPassword = hashPassword(newPassword);
+    
+    Logger.log('Resetting password for: ' + username);
+    Logger.log('New password: ' + newPassword);
+    Logger.log('Hashed password: ' + hashedPassword);
+    
+    // Tìm user và update password
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][1] === username) { // Column B: Tên đăng nhập
+        sheet.getRange(i + 1, 3).setValue(hashedPassword); // Column C: Mật khẩu
+        
+        Logger.log('✅ Password updated successfully for user: ' + username);
+        Logger.log('Row: ' + (i + 1));
+        
+        return { 
+          success: true, 
+          message: 'Đã reset mật khẩu thành công',
+          username: username,
+          newPassword: newPassword,
+          hash: hashedPassword
+        };
+      }
+    }
+    
+    Logger.log('❌ User not found: ' + username);
+    return { success: false, message: 'Không tìm thấy user' };
+    
+  } catch (error) {
+    Logger.log('Error: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+function quickFixPassword() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Người dùng');
+  
+  if (!sheet) {
+    Logger.log('❌ Sheet Người dùng không tồn tại');
+    return;
+  }
+  
+  // Tạo hash cho mật khẩu mới
+  var newPassword = 'admin123@';
+  var hashedPassword = Utilities.base64Encode(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, newPassword)
+  );
+  
+  // Update vào row 2 (admin user)
+  sheet.getRange('C2').setValue(hashedPassword);
+  
+  Logger.log('✅ DONE! Login với: admin / ' + newPassword);
+  Logger.log('Hash: ' + hashedPassword);
+}
+
+// ========== BUDGET AUTO-UPDATE FROM EXPENSES ==========
+
+/**
+ * Calculate total spent for a budget from Expense sheet
+ * @param {string} budgetId - Budget ID
+ * @param {string} month - Month in format YYYY-MM
+ * @return {Object} Response with spent amount
+ */
+function calculateBudgetSpent(budgetId, month) {
+  try {
+    console.log('calculateBudgetSpent called - BudgetID: ' + budgetId + ', Month: ' + month);
+    
+    var budgetSheet = getSheet(CONFIG.SHEET_NAMES.BUDGET);
+    var expenseSheet = getSheet(CONFIG.SHEET_NAMES.EXPENSE);
+    
+    if (!budgetSheet || !expenseSheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    // Get budget info
+    var budgetData = budgetSheet.getDataRange().getValues();
+    var budgetRow = -1;
+    var budgetCategoryId = '';
+    var budgetSubcategoryName = ''; // Thay đổi từ ID sang Name
+    
+    for (var i = 1; i < budgetData.length; i++) {
+      if (budgetData[i][0] === budgetId) {
+        budgetRow = i;
+        
+        // Parse category
+        try {
+          var catJson = typeof budgetData[i][3] === 'string' ? 
+            JSON.parse(budgetData[i][3]) : budgetData[i][3];
+          
+          if (catJson && catJson[0]) {
+            budgetCategoryId = catJson[0].id || '';
+            budgetSubcategoryName = catJson[0].subcategory || ''; // Lưu tên subcategory
+          }
+        } catch(e) {
+          console.log('Error parsing budget category: ' + e.toString());
+        }
+        break;
+      }
+    }
+    
+    if (budgetRow < 0) {
+      return { success: false, message: 'Không tìm thấy ngân sách' };
+    }
+    
+    console.log('Budget found - CategoryID: ' + budgetCategoryId + ', Subcategory: ' + budgetSubcategoryName);
+    
+    // Calculate total spent from Expense sheet
+    var expenseData = expenseSheet.getDataRange().getValues();
+    var totalSpent = 0;
+    var matchedCount = 0;
+    
+    for (var i = 1; i < expenseData.length; i++) {
+      var expenseDate = expenseData[i][1]; // Cột Ngày
+      var expenseAmount = parseFloat(expenseData[i][3]) || 0; // Cột Số tiền
+      
+      // Check month
+      var expenseMonth = '';
+      if (expenseDate instanceof Date) {
+        expenseMonth = expenseDate.getFullYear() + '-' + 
+          String(expenseDate.getMonth() + 1).padStart(2, '0');
+      } else if (typeof expenseDate === 'string') {
+        // Handle string dates
+        if (expenseDate.indexOf('/') > -1) {
+          // Format: DD/MM/YYYY
+          var parts = expenseDate.split('/');
+          if (parts.length === 3) {
+            expenseMonth = parts[2] + '-' + parts[1].padStart(2, '0');
+          }
+        } else if (expenseDate.indexOf('-') > -1) {
+          // Format: YYYY-MM-DD
+          expenseMonth = expenseDate.substring(0, 7);
+        }
+      }
+      
+      if (expenseMonth !== month) continue;
+      
+      // Check category match
+      try {
+        var expenseCat = typeof expenseData[i][2] === 'string' ? 
+          JSON.parse(expenseData[i][2]) : expenseData[i][2];
+        
+        if (expenseCat && expenseCat[0]) {
+          var expenseCategoryId = expenseCat[0].id || '';
+          var expenseSubcategoryName = expenseCat[0].subcategory || '';
+          
+          // Match logic với cả ID và Name
+          var isMatch = false;
+          
+          if (budgetSubcategoryName) {
+            // Budget có subcategory → match cả main category và subcategory
+            isMatch = (expenseCategoryId === budgetCategoryId) && 
+                      (expenseSubcategoryName === budgetSubcategoryName);
+          } else {
+            // Budget chỉ có main category → match main category
+            isMatch = (expenseCategoryId === budgetCategoryId);
+          }
+          
+          if (isMatch) {
+            totalSpent += expenseAmount;
+            matchedCount++;
+            console.log('Matched expense #' + (i+1) + ': ' + expenseAmount);
+          }
+        }
+      } catch(e) {
+        console.log('Error parsing expense category row ' + i + ': ' + e.toString());
+      }
+    }
+    
+    console.log('Total matched: ' + matchedCount + ' expenses, Total spent: ' + totalSpent);
+    
+    // Update budget
+    var planned = parseFloat(budgetData[budgetRow][4]) || 0; // Cột Kế hoạch
+    var remaining = planned - totalSpent;
+    var percentage = planned > 0 ? Math.round((totalSpent / planned) * 100) : 0;
+    var ratio = planned > 0 ? totalSpent / planned : 0;
+    
+    // Calculate status
+    var status = 'on-track';
+    var alerts = [];
+    
+    if (percentage >= 100) {
+      status = 'exceeded';
+      alerts.push('Đã vượt ngân sách');
+    } else if (percentage >= 90) {
+      status = 'warning';
+      alerts.push('Sắp vượt ngân sách');
+    }
+    
+    // Update sheet với các cột đúng vị trí
+    budgetSheet.getRange(budgetRow + 1, 6).setValue(totalSpent); // Cột 6: Chi tiêu
+    budgetSheet.getRange(budgetRow + 1, 7).setValue(ratio); // Cột 7: Chênh lệch (ratio)
+    
+    // Update metadata
+    var metadata = {
+      categoryName: budgetData[budgetRow][3], // Keep original
+      remaining: remaining,
+      percentage: percentage,
+      status: status,
+      alerts: alerts,
+      lastUpdated: new Date().toISOString(),
+      matchedExpenses: matchedCount
+    };
+    
+    budgetSheet.getRange(budgetRow + 1, 8).setValue(JSON.stringify(metadata)); // Cột 8: Metadata
+    
+    console.log('✅ Budget updated successfully');
+    console.log('Spent: ' + totalSpent + ', Planned: ' + planned + ', Ratio: ' + ratio);
+    
+    return {
+      success: true,
+      spent: totalSpent,
+      planned: planned,
+      remaining: remaining,
+      percentage: percentage,
+      status: status,
+      matchedCount: matchedCount
+    };
+    
+  } catch (error) {
+    console.log('Error in calculateBudgetSpent: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+/**
+ * Update all budgets for a specific month
+ * Triggers when expense is added/updated/deleted
+ * @param {string} month - Month in format YYYY-MM
+ * @return {Object} Response
+ */
+function updateAllBudgets(month) {
+  try {
+    console.log('updateAllBudgets called for month: ' + month);
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.BUDGET);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    console.log('Budget sheet has ' + data.length + ' rows');
+    
+    var updated = 0;
+    var errors = 0;
+    
+    for (var i = 1; i < data.length; i++) {
+      var budgetId = data[i][0];
+      var budgetMonth = data[i][2];
+      
+      // Normalize month format
+      if (typeof budgetMonth === 'string' && budgetMonth.length > 7) {
+        budgetMonth = budgetMonth.substring(0, 7);
+      }
+      
+      if (budgetMonth === month) {
+        console.log('Updating budget: ' + budgetId + ' for month: ' + budgetMonth);
+        
+        var result = calculateBudgetSpent(budgetId, month);
+        
+        if (result.success) {
+          updated++;
+          console.log('✅ Updated budget: ' + budgetId + ', Spent: ' + result.spent);
+        } else {
+          errors++;
+          console.log('❌ Failed to update budget: ' + budgetId + ', Error: ' + result.message);
+        }
+      }
+    }
+    
+    console.log('Update complete - Success: ' + updated + ', Errors: ' + errors);
+    
+    return {
+      success: true,
+      message: 'Đã cập nhật ' + updated + ' ngân sách',
+      updated: updated,
+      errors: errors
+    };
+    
+  } catch (error) {
+    console.log('Error in updateAllBudgets: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+/**
+ * Auto-trigger budget update when expense changes
+ * Call this after createRecord/updateRecord/deleteRecord for Expense sheet
+ * @param {string} expenseDate - Date of expense
+ */
+function triggerBudgetUpdate(expenseDate) {
+  try {
+    // Extract month from date
+    var month = '';
+    
+    if (expenseDate instanceof Date) {
+      month = expenseDate.getFullYear() + '-' + 
+        String(expenseDate.getMonth() + 1).padStart(2, '0');
+    } else if (typeof expenseDate === 'string') {
+      var parts = expenseDate.split('-');
+      if (parts.length >= 2) {
+        month = parts[0] + '-' + parts[1];
+      }
+    }
+    
+    if (!month) {
+      console.log('Cannot extract month from date: ' + expenseDate);
+      return;
+    }
+    
+    console.log('Triggering budget update for month: ' + month);
+    
+    // Update all budgets for this month
+    updateAllBudgets(month);
+    
+  } catch (error) {
+    console.log('Error in triggerBudgetUpdate: ' + error.toString());
+  }
+}
+
+// ========== TRANSFER MONEY BETWEEN ACCOUNTS ==========
+function transferMoney(fromAccountId, toAccountId, amount, description) {
+  try {
+    if (!fromAccountId || !toAccountId || amount <= 0) {
+      return { success: false, message: 'Thông tin không hợp lệ' };
+    }
+    
+    if (fromAccountId === toAccountId) {
+      return { success: false, message: 'Không thể chuyển đến cùng tài khoản' };
+    }
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.ACCOUNTS);
+    if (!sheet) {
+      return { success: false, message: 'Sheet Tài khoản không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    
+    var accountIdIndex = -1;
+    var currentBalanceIndex = -1;
+    
+    for (var h = 0; h < headers.length; h++) {
+      if (headers[h] === 'AccountID' || headers[h] === 'accountID') {
+        accountIdIndex = h;
+      }
+      if (headers[h] === 'Số dư hiện tại') {
+        currentBalanceIndex = h;
+      }
+    }
+    
+    if (accountIdIndex < 0 || currentBalanceIndex < 0) {
+      return { success: false, message: 'Không tìm thấy cột cần thiết' };
+    }
+    
+    var fromAccountRow = -1;
+    var toAccountRow = -1;
+    var fromBalance = 0;
+    
+    // Tìm 2 tài khoản
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][accountIdIndex] === fromAccountId) {
+        fromAccountRow = i;
+        fromBalance = parseFloat(data[i][currentBalanceIndex]) || 0;
+      }
+      if (data[i][accountIdIndex] === toAccountId) {
+        toAccountRow = i;
+      }
+    }
+    
+    if (fromAccountRow < 0 || toAccountRow < 0) {
+      return { success: false, message: 'Không tìm thấy tài khoản' };
+    }
+    
+    // Kiểm tra số dư
+    if (fromBalance < amount) {
+      return { success: false, message: 'Số dư không đủ' };
+    }
+    
+    // Trừ tiền tài khoản nguồn
+    var resultSubtract = updateAccountBalance(fromAccountId, amount, 'subtract');
+    if (!resultSubtract.success) {
+      return resultSubtract;
+    }
+    
+    // Cộng tiền tài khoản đích
+    var resultAdd = updateAccountBalance(toAccountId, amount, 'add');
+    if (!resultAdd.success) {
+      // Rollback: Cộng lại tiền vào tài khoản nguồn
+      updateAccountBalance(fromAccountId, amount, 'add');
+      return { success: false, message: 'Lỗi khi cộng tiền vào tài khoản đích' };
+    }
+    
+    // Log audit
+    var session = getCurrentSession();
+    if (session) {
+      addAuditLog(session.userId, 'transfer', 'accounts', fromAccountId + '->' + toAccountId, {
+        from: fromAccountId,
+        to: toAccountId,
+        amount: amount,
+        description: description
+      });
+    }
+    
+    return { 
+      success: true, 
+      message: 'Chuyển tiền thành công',
+      newBalanceFrom: resultSubtract.newBalance,
+      newBalanceTo: resultAdd.newBalance
+    };
+    
+  } catch (error) {
+    Logger.log('Error in transferMoney: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+function getRecords(sheetName) {
+  try {
+    Logger.log('===== getRecords called for: ' + sheetName + ' =====');
+    
+    var sheet = getSheet(sheetName);
+    if (!sheet) {
+      Logger.log('❌ Sheet not found: ' + sheetName);
+      return { success: false, message: 'Sheet không tồn tại: ' + sheetName };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    Logger.log('✅ Sheet found, rows: ' + data.length);
+    
+    if (data.length <= 1) {
+      Logger.log('⚠️ No data rows');
+      return { success: true, data: [] };
+    }
+    
+    var headers = data[0];
+    Logger.log('Headers: ' + JSON.stringify(headers));
+    
+    var records = [];
+    
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var record = {};
+      
+      for (var j = 0; j < headers.length; j++) {
+        var header = headers[j];
+        var value = row[j];
+        
+        // Convert dates
+        if (value instanceof Date) {
+          value = Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+        }
+        
+        record[header] = value;
+      }
+      
+      records.push(record);
+    }
+    
+    Logger.log('✅ Total records parsed: ' + records.length);
+    
+    // Sample first record
+    if (records.length > 0) {
+      Logger.log('Sample record: ' + JSON.stringify(records[0]));
+    }
+    
+    return {
+      success: true,
+      data: records
+    };
+    
+  } catch (error) {
+    Logger.log('❌ Error in getRecords: ' + error.toString());
+    Logger.log('Stack: ' + error.stack);
+    return {
+      success: false,
+      message: error.toString()
+    };
+  }
+}
+
+function testGetBudgetRecords() {
+  Logger.log('===== TEST GET BUDGET RECORDS =====');
+  
+  var result = getRecords('Ngân sách');
+  Logger.log('Result: ' + JSON.stringify(result));
+  
+  if (result.success) {
+    Logger.log('✅ Success, records: ' + result.data.length);
+  } else {
+    Logger.log('❌ Failed: ' + result.message);
+  }
+}
+
+// ========================================
+// CATEGORY MANAGEMENT FUNCTIONS
+// ========================================
+
+/**
+ * Get categories by type and optional parent ID
+ * @param {string} type - 'income', 'expense', 'budget', etc.
+ * @param {string} parentId - Parent category ID (null for main categories)
+ * @param {string} userId - User ID
+ * @return {Object} Response with categories array
+ */
+function getCategories(type, parentId, userId) {
+  try {
+    Logger.log('getCategories called - Type: ' + type + ', ParentID: ' + parentId + ', UserID: ' + userId);
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+    if (!sheet) {
+      return { success: false, message: 'Sheet Cài đặt không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) {
+      return { success: true, data: [] };
+    }
+    
+    var headers = data[0];
+    var categories = [];
+    
+    // Find column indices
+    var idCol = headers.indexOf('ID');
+    var typeCol = headers.indexOf('Type');
+    var parentIdCol = headers.indexOf('ParentID');
+    var nameCol = headers.indexOf('Name');
+    var iconCol = headers.indexOf('Icon');
+    var colorCol = headers.indexOf('Color');
+    var statusCol = headers.indexOf('Status');
+    var sortCol = headers.indexOf('SortOrder');
+    var userIdCol = headers.indexOf('UserID');
+    
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      
+      // Filter by type and status
+      if (row[typeCol] !== type || row[statusCol] !== 'active') {
+        continue;
+      }
+      
+      // Filter by userId
+      if (userId && row[userIdCol] !== userId) {
+        continue;
+      }
+      
+      // Filter by parentId
+      var rowParentId = row[parentIdCol] === '' ? null : row[parentIdCol];
+      var filterParentId = parentId === '' || parentId === 'null' ? null : parentId;
+      
+      if (rowParentId !== filterParentId) {
+        continue;
+      }
+      
+      // Check if has children
+      var hasChildren = false;
+      for (var j = 1; j < data.length; j++) {
+        if (data[j][parentIdCol] === row[idCol] && data[j][statusCol] === 'active') {
+          hasChildren = true;
+          break;
+        }
+      }
+      
+      categories.push({
+        id: row[idCol],
+        type: row[typeCol],
+        parentId: rowParentId,
+        name: row[nameCol],
+        icon: row[iconCol] || '',
+        color: row[colorCol] || '',
+        sortOrder: row[sortCol] || 0,
+        hasChildren: hasChildren
+      });
+    }
+    
+    // Sort by sortOrder
+    categories.sort(function(a, b) {
+      return a.sortOrder - b.sortOrder;
+    });
+    
+    Logger.log('Found ' + categories.length + ' categories');
+    
+    return {
+      success: true,
+      data: categories
+    };
+    
+  } catch (error) {
+    Logger.log('Error in getCategories: ' + error.toString());
+    return {
+      success: false,
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Get ALL categories by type (including both main and sub categories)
+ * @param {string} type - 'income', 'expense', 'budget', etc.
+ * @param {string} userId - User ID
+ * @return {Object} Response with all categories array
+ */
+function getAllCategoriesByType(type, userId) {
+  try {
+    Logger.log('getAllCategoriesByType called - Type: ' + type + ', UserID: ' + userId);
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+    if (!sheet) {
+      return { success: false, message: 'Sheet Cài đặt không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) {
+      return { success: true, data: [] };
+    }
+    
+    var headers = data[0];
+    var categories = [];
+    
+    // Find column indices
+    var idCol = headers.indexOf('ID');
+    var typeCol = headers.indexOf('Type');
+    var parentIdCol = headers.indexOf('ParentID');
+    var nameCol = headers.indexOf('Name');
+    var iconCol = headers.indexOf('Icon');
+    var colorCol = headers.indexOf('Color');
+    var statusCol = headers.indexOf('Status');
+    var sortCol = headers.indexOf('SortOrder');
+    var userIdCol = headers.indexOf('UserID');
+    
+    // Get ALL categories of this type (both main and sub)
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      
+      // Filter by type and status
+      if (row[typeCol] !== type || row[statusCol] !== 'active') {
+        continue;
+      }
+      
+      // Filter by userId
+      if (userId && row[userIdCol] !== userId) {
+        continue;
+      }
+      
+      var rowParentId = row[parentIdCol] === '' ? null : row[parentIdCol];
+      
+      // Check if has children
+      var hasChildren = false;
+      for (var j = 1; j < data.length; j++) {
+        if (data[j][parentIdCol] === row[idCol] && data[j][statusCol] === 'active') {
+          hasChildren = true;
+          break;
+        }
+      }
+      
+      categories.push({
+        id: row[idCol],
+        type: row[typeCol],
+        parentId: rowParentId,
+        name: row[nameCol],
+        icon: row[iconCol] || '',
+        color: row[colorCol] || '',
+        sortOrder: row[sortCol] || 999,
+        hasChildren: hasChildren
+      });
+    }
+    
+    // Sort by sortOrder
+    categories.sort(function(a, b) {
+      return a.sortOrder - b.sortOrder;
+    });
+    
+    Logger.log('Found ' + categories.length + ' total categories (main + sub)');
+    
+    var mainCount = 0;
+    var subCount = 0;
+    for (var i = 0; i < categories.length; i++) {
+      if (categories[i].parentId) {
+        subCount++;
+      } else {
+        mainCount++;
+      }
+    }
+    Logger.log('Main: ' + mainCount + ', Sub: ' + subCount);
+    
+    return {
+      success: true,
+      data: categories
+    };
+    
+  } catch (error) {
+    Logger.log('Error in getAllCategoriesByType: ' + error.toString());
+    return {
+      success: false,
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Save new category
+ * @param {Object} data - Category data
+ * @return {Object} Response
+ */
+function saveCategory(data) {
+  try {
+    Logger.log('saveCategory called: ' + JSON.stringify(data));
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    // Generate ID
+    var id = generateCategoryId(data.type);
+    
+    // Validate parent ID if provided
+    if (data.parentId && data.parentId !== 'null') {
+      if (!checkCategoryExists(data.parentId)) {
+        return { success: false, message: 'Danh mục cha không tồn tại' };
+      }
+    }
+    
+    // Check duplicate name in same level
+    if (checkDuplicateCategoryName(data.name, data.type, data.parentId, null)) {
+      return { success: false, message: 'Tên danh mục đã tồn tại' };
+    }
+    
+    var now = new Date();
+    var newRow = [
+      id,
+      data.type,
+      data.parentId && data.parentId !== 'null' ? data.parentId : null,
+      data.name,
+      data.icon || '',
+      data.color || '',
+      data.userId || 'USR001',
+      'active',
+      data.sortOrder || 999,
+      now,
+      now
+    ];
+    
+    sheet.appendRow(newRow);
+    
+    Logger.log('Category saved successfully: ' + id);
+    
+    return {
+      success: true,
+      message: 'Thêm danh mục thành công',
+      id: id
+    };
+    
+  } catch (error) {
+    Logger.log('Error in saveCategory: ' + error.toString());
+    return {
+      success: false,
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Update existing category
+ * @param {string} id - Category ID
+ * @param {Object} data - Updated data
+ * @return {Object} Response
+ */
+function updateCategory(id, data) {
+  try {
+    Logger.log('updateCategory called - ID: ' + id + ', Data: ' + JSON.stringify(data));
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    var sheetData = sheet.getDataRange().getValues();
+    var headers = sheetData[0];
+    
+    var idCol = headers.indexOf('ID');
+    var nameCol = headers.indexOf('Name');
+    var iconCol = headers.indexOf('Icon');
+    var colorCol = headers.indexOf('Color');
+    var sortCol = headers.indexOf('SortOrder');
+    var updatedCol = headers.indexOf('UpdatedAt');
+    
+    var rowIndex = -1;
+    
+    for (var i = 1; i < sheetData.length; i++) {
+      if (sheetData[i][idCol] === id) {
+        rowIndex = i;
+        break;
+      }
+    }
+    
+    if (rowIndex === -1) {
+      return { success: false, message: 'Không tìm thấy danh mục' };
+    }
+    
+    // Check duplicate name (exclude current record)
+    if (checkDuplicateCategoryName(data.name, sheetData[rowIndex][headers.indexOf('Type')], 
+        sheetData[rowIndex][headers.indexOf('ParentID')], id)) {
+      return { success: false, message: 'Tên danh mục đã tồn tại' };
+    }
+    
+    // Update
+    sheet.getRange(rowIndex + 1, nameCol + 1).setValue(data.name);
+    sheet.getRange(rowIndex + 1, iconCol + 1).setValue(data.icon || '');
+    sheet.getRange(rowIndex + 1, colorCol + 1).setValue(data.color || '');
+    sheet.getRange(rowIndex + 1, sortCol + 1).setValue(data.sortOrder || 999);
+    sheet.getRange(rowIndex + 1, updatedCol + 1).setValue(new Date());
+    
+    Logger.log('Category updated successfully');
+    
+    return {
+      success: true,
+      message: 'Cập nhật danh mục thành công'
+    };
+    
+  } catch (error) {
+    Logger.log('Error in updateCategory: ' + error.toString());
+    return {
+      success: false,
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Delete category (soft delete)
+ * @param {string} id - Category ID
+ * @return {Object} Response
+ */
+function deleteCategory(id) {
+  try {
+    Logger.log('deleteCategory called - ID: ' + id);
+    
+    // Check if category is in use
+    var inUse = checkCategoryInUse(id);
+    if (inUse.success && inUse.inUse) {
+      return {
+        success: false,
+        message: 'Danh mục đang được sử dụng ở: ' + inUse.usedIn.join(', ') + '. Không thể xóa.'
+      };
+    }
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    
+    var idCol = headers.indexOf('ID');
+    var statusCol = headers.indexOf('Status');
+    var updatedCol = headers.indexOf('UpdatedAt');
+    
+    var rowIndex = -1;
+    
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][idCol] === id) {
+        rowIndex = i;
+        break;
+      }
+    }
+    
+    if (rowIndex === -1) {
+      return { success: false, message: 'Không tìm thấy danh mục' };
+    }
+    
+    // Soft delete - set status to inactive
+    sheet.getRange(rowIndex + 1, statusCol + 1).setValue('inactive');
+    sheet.getRange(rowIndex + 1, updatedCol + 1).setValue(new Date());
+    
+    // Also soft delete all children
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][headers.indexOf('ParentID')] === id) {
+        sheet.getRange(i + 1, statusCol + 1).setValue('inactive');
+        sheet.getRange(i + 1, updatedCol + 1).setValue(new Date());
+      }
+    }
+    
+    Logger.log('Category soft deleted successfully');
+    
+    return {
+      success: true,
+      message: 'Xóa danh mục thành công'
+    };
+    
+  } catch (error) {
+    Logger.log('Error in deleteCategory: ' + error.toString());
+    return {
+      success: false,
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Check if category is being used in any transactions
+ * @param {string} categoryId - Category ID
+ * @return {Object} Response with inUse flag and usedIn array
+ */
+function checkCategoryInUse(categoryId) {
+  try {
+    var usedIn = [];
+    
+    // Check in Income
+    var incomeSheet = getSheet(CONFIG.SHEET_NAMES.INCOME);
+    if (incomeSheet && checkCategoryInSheet(incomeSheet, categoryId)) {
+      usedIn.push('Thu nhập');
+    }
+    
+    // Check in Expense
+    var expenseSheet = getSheet(CONFIG.SHEET_NAMES.EXPENSE);
+    if (expenseSheet && checkCategoryInSheet(expenseSheet, categoryId)) {
+      usedIn.push('Chi tiêu');
+    }
+    
+    // Check in Budget
+    var budgetSheet = getSheet(CONFIG.SHEET_NAMES.BUDGET);
+    if (budgetSheet && checkCategoryInSheet(budgetSheet, categoryId)) {
+      usedIn.push('Ngân sách');
+    }
+    
+    return {
+      success: true,
+      inUse: usedIn.length > 0,
+      usedIn: usedIn
+    };
+    
+  } catch (error) {
+    Logger.log('Error in checkCategoryInUse: ' + error.toString());
+    return {
+      success: false,
+      message: error.toString()
+    };
+  }
+}
+
+// ========== HELPER FUNCTIONS ==========
+
+function generateCategoryId(type) {
+  var prefix = 'CAT_' + type.substring(0, 3).toUpperCase() + '_';
+  var timestamp = new Date().getTime();
+  var random = Math.floor(Math.random() * 1000);
+  return prefix + timestamp + '_' + random;
+}
+
+function checkCategoryExists(categoryId) {
+  var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+  if (!sheet) return false;
+  
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === categoryId && data[i][7] === 'active') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function checkDuplicateCategoryName(name, type, parentId, excludeId) {
+  var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+  if (!sheet) return false;
+  
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  
+  var idCol = headers.indexOf('ID');
+  var typeCol = headers.indexOf('Type');
+  var parentIdCol = headers.indexOf('ParentID');
+  var nameCol = headers.indexOf('Name');
+  var statusCol = headers.indexOf('Status');
+  
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][statusCol] !== 'active') continue;
+    if (excludeId && data[i][idCol] === excludeId) continue;
+    if (data[i][typeCol] !== type) continue;
+    
+    var rowParentId = data[i][parentIdCol] === '' ? null : data[i][parentIdCol];
+    var checkParentId = parentId === '' || parentId === 'null' ? null : parentId;
+    
+    if (rowParentId !== checkParentId) continue;
+    
+    if (data[i][nameCol].toLowerCase() === name.toLowerCase()) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+function checkCategoryInSheet(sheet, categoryId) {
+  var data = sheet.getDataRange().getValues();
+  
+  for (var i = 1; i < data.length; i++) {
+    var categoryData = data[i][2]; // Cột "Danh mục ID" thường ở vị trí 2
+    
+    try {
+      if (typeof categoryData === 'string' && categoryData.indexOf(categoryId) !== -1) {
+        return true;
+      }
+    } catch(e) {
+      // Continue
+    }
+  }
+  
+  return false;
+}
+
+// ========================================
+// SETUP & INITIALIZATION WRAPPER FUNCTIONS
+// ========================================
+
+/**
+ * Wrapper function to create/update Settings sheet
+ * Can be run directly from Apps Script Editor
+ */
+function setupSettingsSheet() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    if (!ss) {
+      Logger.log('❌ Không tìm thấy Spreadsheet');
+      return;
+    }
+    
+    Logger.log('🔄 Bắt đầu tạo/cập nhật Sheet Cài đặt...');
+    
+    createOrUpdateSettingsSheet(ss);
+    
+    Logger.log('✅ Hoàn thành! Sheet "Cài đặt" đã được tạo/cập nhật với dữ liệu mẫu');
+    Logger.log('📊 Kiểm tra sheet để xem danh mục mẫu');
+    
+  } catch (error) {
+    Logger.log('❌ Lỗi: ' + error.toString());
+  }
+}
+
+/**
+ * Initialize all sheets (run once)
+ */
+function initializeAllSheets() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    Logger.log('🚀 Bắt đầu khởi tạo tất cả các sheet...');
+    
+    // Run the main initialization
+    initializeSampleData();
+    
+    Logger.log('✅ Khởi tạo hoàn tất!');
+    
+  } catch (error) {
+    Logger.log('❌ Lỗi khởi tạo: ' + error.toString());
+  }
+}
+
+function testGetMainExpenseCategories() {
+  var result = getCategories('expense', null, 'USR001');
+  Logger.log('Result: ' + JSON.stringify(result, null, 2));
+}
+
+function testGetSubCategories() {
+  var result = getCategories('expense', 'CAT_EXP_001', 'USR001');
+  Logger.log('Subcategories: ' + JSON.stringify(result, null, 2));
+}
+
+// ========================================
+// DYNAMIC CATEGORY LOADING
+// ========================================
+
+/**
+ * Get main categories by type (expense, income, budget)
+ * @param {string} type - Category type
+ * @param {string} userId - User ID
+ * @return {Object} Response with categories
+ */
+function getMainCategories(type, userId) {
+  try {
+    console.log('getMainCategories called - Type: ' + type + ', UserID: ' + userId);
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+    if (!sheet) {
+      return { success: false, message: 'Sheet Cài đặt không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) {
+      return { success: true, data: [] };
+    }
+    
+    var headers = data[0];
+    var categories = [];
+    
+    // Find column indices
+    var idCol = headers.indexOf('ID');
+    var typeCol = headers.indexOf('Type');
+    var parentIdCol = headers.indexOf('ParentID');
+    var nameCol = headers.indexOf('Name');
+    var iconCol = headers.indexOf('Icon');
+    var colorCol = headers.indexOf('Color');
+    var statusCol = headers.indexOf('Status');
+    var sortCol = headers.indexOf('SortOrder');
+    var userIdCol = headers.indexOf('UserID');
+    
+    // Get only MAIN categories (parentId = null/empty)
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      
+      // Filter by type, status, userId, and NO parent
+      if (row[typeCol] !== type || row[statusCol] !== 'active') continue;
+      if (userId && row[userIdCol] !== userId) continue;
+      
+      var rowParentId = row[parentIdCol];
+      if (rowParentId && rowParentId !== '') continue; // Skip subcategories
+      
+      categories.push({
+        id: row[idCol],
+        name: row[nameCol],
+        icon: row[iconCol] || '',
+        color: row[colorCol] || '',
+        sortOrder: row[sortCol] || 999
+      });
+    }
+    
+    // Sort by sortOrder
+    categories.sort(function(a, b) {
+      return a.sortOrder - b.sortOrder;
+    });
+    
+    console.log('Found ' + categories.length + ' main categories');
+    
+    return {
+      success: true,
+      data: categories
+    };
+    
+  } catch (error) {
+    console.log('Error in getMainCategories: ' + error.toString());
+    return {
+      success: false,
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Get subcategories by parent ID
+ * @param {string} parentId - Parent category ID
+ * @param {string} userId - User ID
+ * @return {Object} Response with subcategories
+ */
+function getSubcategories(parentId, userId) {
+  try {
+    console.log('getSubcategories called - ParentID: ' + parentId + ', UserID: ' + userId);
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+    if (!sheet) {
+      return { success: false, message: 'Sheet Cài đặt không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) {
+      return { success: true, data: [] };
+    }
+    
+    var headers = data[0];
+    var subcategories = [];
+    
+    var idCol = headers.indexOf('ID');
+    var parentIdCol = headers.indexOf('ParentID');
+    var nameCol = headers.indexOf('Name');
+    var statusCol = headers.indexOf('Status');
+    var sortCol = headers.indexOf('SortOrder');
+    var userIdCol = headers.indexOf('UserID');
+    
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      
+      if (row[statusCol] !== 'active') continue;
+      if (userId && row[userIdCol] !== userId) continue;
+      if (row[parentIdCol] !== parentId) continue;
+      
+      subcategories.push({
+        id: row[idCol],
+        name: row[nameCol],
+        sortOrder: row[sortCol] || 999
+      });
+    }
+    
+    subcategories.sort(function(a, b) {
+      return a.sortOrder - b.sortOrder;
+    });
+    
+    console.log('Found ' + subcategories.length + ' subcategories for parent: ' + parentId);
+    
+    return {
+      success: true,
+      data: subcategories
+    };
+    
+  } catch (error) {
+    console.log('Error in getSubcategories: ' + error.toString());
+    return {
+      success: false,
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Get category details by ID (including icon, color)
+ * @param {string} categoryId - Category ID
+ * @return {Object} Category details
+ */
+function getCategoryDetails(categoryId) {
+  try {
+    var sheet = getSheet(CONFIG.SHEET_NAMES.SETTINGS);
+    if (!sheet) return null;
+    
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    
+    var idCol = headers.indexOf('ID');
+    var nameCol = headers.indexOf('Name');
+    var iconCol = headers.indexOf('Icon');
+    var colorCol = headers.indexOf('Color');
+    var parentIdCol = headers.indexOf('ParentID');
+    
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][idCol] === categoryId) {
+        return {
+          id: data[i][idCol],
+          name: data[i][nameCol],
+          icon: data[i][iconCol] || '',
+          color: data[i][colorCol] || '',
+          parentId: data[i][parentIdCol] || null
+        };
+      }
+    }
+    
+    return null;
+    
+  } catch (error) {
+    console.log('Error in getCategoryDetails: ' + error.toString());
+    return null;
+  }
+}
+
+function fixAdminPassword() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Người dùng');
+  
+  if (!sheet) {
+    Logger.log('❌ Sheet Người dùng không tồn tại');
+    return;
+  }
+  
+  // Hash password mới
+  var newPassword = 'admin123@';
+  var hashedPassword = Utilities.base64Encode(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, newPassword)
+  );
+  
+  // Update vào row 2 (admin user)
+  sheet.getRange('C2').setValue(hashedPassword);
+  
+  Logger.log('✅ Password đã được reset!');
+  Logger.log('Username: admin');
+  Logger.log('Password: ' + newPassword);
+  Logger.log('Hash: ' + hashedPassword);
+}
+
+function reinitializeUsers() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  createOrUpdateUsersSheet(ss);
+  Logger.log('✅ Sheet Người dùng đã được khởi tạo lại');
+  Logger.log('Login: admin / admin123');
+}
+
+/**
+ * Test login trực tiếp - Bỏ qua frontend
+ */
+function testLoginDirect() {
+  Logger.log('=== DIRECT LOGIN TEST ===');
+  
+  var username = 'admin';
+  var password = 'admin123@';
+  
+  Logger.log('Calling doLogin()...');
+  var result = doLogin(username, password);
+  
+  Logger.log('=== RESULT ===');
+  Logger.log('Success: ' + result.success);
+  Logger.log('Message: ' + result.message);
+  Logger.log('Data: ' + JSON.stringify(result.data));
+  
+  return result;
+}
+
+// ========================================
+// LOAN MANAGEMENT - CALCULATION FUNCTIONS
+// ========================================
+
+/**
+ * Calculate monthly payment (PMT) - Lãi giảm dần
+ * Formula: P * (r * (1 + r)^n) / ((1 + r)^n - 1)
+ */
+function calculatePMT(principal, annualRate, months) {
+  if (annualRate === 0) {
+    return principal / months;
+  }
+  
+  var monthlyRate = annualRate / 12 / 100;
+  var pmt = principal * (monthlyRate * Math.pow(1 + monthlyRate, months)) / 
+            (Math.pow(1 + monthlyRate, months) - 1);
+  
+  return Math.round(pmt);
+}
+
+/**
+ * Calculate loan payment schedule
+ * @param {Object} loanData - Loan information
+ * @return {Array} Payment schedule
+ */
+function calculateLoanSchedule(loanData) {
+  var principal = parseFloat(loanData.principal);
+  var annualRate = parseFloat(loanData.annualRate);
+  var months = parseInt(loanData.months);
+  var interestType = loanData.interestType; // 'declining', 'simple', 'compound'
+  var startDate = new Date(loanData.startDate);
+  
+  var schedule = [];
+  var remainingPrincipal = principal;
+  
+  if (interestType === 'declining') {
+    // LÃI GIẢM DẦN - GÓC CỐ ĐỊNH
+    // Theo yêu cầu: Gốc hàng tháng = Giá trị vay / Tổng tháng
+    // Lãi hàng tháng = Dư nợ * Lãi suất tháng
+    
+    var monthlyPrincipal = Math.round(principal / months);
+    var monthlyRate = annualRate / 12 / 100;
+    
+    for (var i = 1; i <= months; i++) {
+      // Tính lãi trên dư nợ hiện tại
+      var monthlyInterest = Math.round(remainingPrincipal * monthlyRate);
+      
+      // Điều chỉnh kỳ cuối để đúng số gốc
+      var currentPrincipal = (i === months) ? remainingPrincipal : monthlyPrincipal;
+      
+      var dueDate = new Date(startDate);
+      dueDate.setMonth(dueDate.getMonth() + i);
+      
+      schedule.push({
+        period: i,
+        dueDate: Utilities.formatDate(dueDate, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+        principalPayment: currentPrincipal,
+        interestPayment: monthlyInterest,
+        totalPayment: currentPrincipal + monthlyInterest,
+        remainingPrincipal: Math.max(0, remainingPrincipal - currentPrincipal),
+        status: 'pending'
+      });
+      
+      remainingPrincipal -= currentPrincipal;
+    }
+    
+  } else if (interestType === 'simple') {
+    // LÃI ĐƠN
+    var totalInterest = Math.round(principal * (annualRate / 100) * (months / 12));
+    var totalAmount = principal + totalInterest;
+    var monthlyPayment = Math.round(totalAmount / months);
+    var principalPerMonth = Math.round(principal / months);
+    var interestPerMonth = Math.round(totalInterest / months);
+    
+    for (var i = 1; i <= months; i++) {
+      var dueDate = new Date(startDate);
+      dueDate.setMonth(dueDate.getMonth() + i);
+      
+      // Điều chỉnh kỳ cuối
+      var currentPrincipal = (i === months) ? remainingPrincipal : principalPerMonth;
+      var currentInterest = (i === months) ? (totalAmount - principal - (totalInterest - interestPerMonth * (months - 1))) : interestPerMonth;
+      
+      schedule.push({
+        period: i,
+        dueDate: Utilities.formatDate(dueDate, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+        principalPayment: currentPrincipal,
+        interestPayment: currentInterest,
+        totalPayment: currentPrincipal + currentInterest,
+        remainingPrincipal: Math.max(0, remainingPrincipal - currentPrincipal),
+        status: 'pending'
+      });
+      
+      remainingPrincipal -= currentPrincipal;
+    }
+    
+  } else if (interestType === 'compound') {
+    // LÃI KÉP
+    var monthlyRate = annualRate / 12 / 100;
+    var futureValue = principal * Math.pow(1 + monthlyRate, months);
+    var totalPayment = Math.round(futureValue);
+    var monthlyPayment = Math.round(totalPayment / months);
+    
+    for (var i = 1; i <= months; i++) {
+      var dueDate = new Date(startDate);
+      dueDate.setMonth(dueDate.getMonth() + i);
+      
+      // Phân bổ đều
+      var principalPayment = Math.round(principal / months);
+      var interestPayment = monthlyPayment - principalPayment;
+      
+      // Điều chỉnh kỳ cuối
+      if (i === months) {
+        principalPayment = remainingPrincipal;
+        interestPayment = totalPayment - (monthlyPayment * (months - 1)) - principalPayment;
+      }
+      
+      schedule.push({
+        period: i,
+        dueDate: Utilities.formatDate(dueDate, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+        principalPayment: principalPayment,
+        interestPayment: interestPayment,
+        totalPayment: principalPayment + interestPayment,
+        remainingPrincipal: Math.max(0, remainingPrincipal - principalPayment),
+        status: 'pending'
+      });
+      
+      remainingPrincipal -= principalPayment;
+    }
+  }
+  
+  return schedule;
+}
+
+/**
+ * Mark a payment as paid
+ * @param {string} loanId - Loan ID
+ * @param {number} period - Payment period
+ * @return {Object} Response
+ */
+function markLoanPaymentAsPaid(loanId, period) {
+  try {
+    console.log('=== MARK PAYMENT AS PAID ===');
+    console.log('LoanID:', loanId, 'Period:', period);
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.LOAN);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    
+    console.log('Headers:', headers);
+    
+    // Find column indices
+    var idCol = -1;
+    var detailsCol = -1;
+    var paidPrincipalCol = -1;
+    var remainingCol = -1;
+    var statusCol = -1;
+    var principalCol = -1; // Giá trị vay
+    
+    for (var h = 0; h < headers.length; h++) {
+      if (headers[h] === 'ID') idCol = h;
+      if (headers[h] === 'Chi tiết khoản vay') detailsCol = h;
+      if (headers[h] === 'Tiền gốc đã trả') paidPrincipalCol = h;
+      if (headers[h] === 'Tiền vay còn lại') remainingCol = h;
+      if (headers[h] === 'Tình trạng') statusCol = h;
+      if (headers[h] === 'Giá trị vay') principalCol = h;
+    }
+    
+    console.log('Column indices:', {
+      idCol: idCol,
+      detailsCol: detailsCol,
+      paidPrincipalCol: paidPrincipalCol,
+      remainingCol: remainingCol,
+      statusCol: statusCol,
+      principalCol: principalCol
+    });
+    
+    if (idCol < 0 || detailsCol < 0 || paidPrincipalCol < 0 || remainingCol < 0 || statusCol < 0 || principalCol < 0) {
+      return { success: false, message: 'Không tìm thấy cột cần thiết' };
+    }
+    
+    // Find loan row
+    var loanRow = -1;
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][idCol] === loanId) {
+        loanRow = i;
+        break;
+      }
+    }
+    
+    if (loanRow < 0) {
+      return { success: false, message: 'Không tìm thấy khoản vay' };
+    }
+    
+    console.log('Found loan at row:', loanRow + 1);
+    
+    // Parse details
+    var details = null;
+    try {
+      var detailsStr = data[loanRow][detailsCol];
+      details = typeof detailsStr === 'string' ? JSON.parse(detailsStr) : detailsStr;
+    } catch(e) {
+      console.log('Parse details error:', e.toString());
+      return { success: false, message: 'Không thể đọc chi tiết khoản vay' };
+    }
+    
+    if (!details || !details.schedule) {
+      return { success: false, message: 'Không tìm thấy lịch trả nợ' };
+    }
+    
+    console.log('Schedule has', details.schedule.length, 'periods');
+    
+    // Find payment period
+    var payment = null;
+    var paymentIndex = -1;
+    
+    for (var j = 0; j < details.schedule.length; j++) {
+      if (details.schedule[j].period === period) {
+        payment = details.schedule[j];
+        paymentIndex = j;
+        break;
+      }
+    }
+    
+    if (!payment) {
+      return { success: false, message: 'Không tìm thấy kỳ thanh toán' };
+    }
+    
+    console.log('Found payment:', payment);
+    
+    if (payment.status === 'paid') {
+      return { success: false, message: 'Kỳ này đã được đánh dấu là đã trả' };
+    }
+    
+    // Mark as paid
+    details.schedule[paymentIndex].status = 'paid';
+    details.schedule[paymentIndex].paidDate = new Date().toISOString();
+    
+    console.log('Marked period', period, 'as paid');
+    
+    // Recalculate totals
+    var totalPaidPrincipal = 0;
+    for (var j = 0; j < details.schedule.length; j++) {
+      if (details.schedule[j].status === 'paid') {
+        totalPaidPrincipal += parseFloat(details.schedule[j].principalPayment) || 0;
+      }
+    }
+    
+    console.log('Total paid principal:', totalPaidPrincipal);
+    
+    // Get original principal
+    var originalPrincipal = parseFloat(data[loanRow][principalCol]) || 0;
+    console.log('Original principal:', originalPrincipal);
+    
+    // Calculate remaining
+    var remaining = Math.max(0, originalPrincipal - totalPaidPrincipal);
+    console.log('Remaining:', remaining);
+    
+    // Determine status
+    var loanStatus = 'active';
+    if (remaining <= 0) {
+      loanStatus = 'completed';
+    } else {
+      var allPaid = true;
+      for (var j = 0; j < details.schedule.length; j++) {
+        if (details.schedule[j].status !== 'paid') {
+          allPaid = false;
+          break;
+        }
+      }
+      if (allPaid) {
+        loanStatus = 'completed';
+      }
+    }
+    
+    console.log('New status:', loanStatus);
+    
+    // Write back to sheet
+    try {
+      // Update details
+      sheet.getRange(loanRow + 1, detailsCol + 1).setValue(JSON.stringify(details));
+      console.log('✓ Updated details');
+      
+      // Update paid principal
+      sheet.getRange(loanRow + 1, paidPrincipalCol + 1).setValue(totalPaidPrincipal);
+      console.log('✓ Updated paid principal:', totalPaidPrincipal);
+      
+      // Update remaining
+      sheet.getRange(loanRow + 1, remainingCol + 1).setValue(remaining);
+      console.log('✓ Updated remaining:', remaining);
+      
+      // Update status
+      sheet.getRange(loanRow + 1, statusCol + 1).setValue(loanStatus);
+      console.log('✓ Updated status:', loanStatus);
+      
+    } catch(e) {
+      console.log('❌ Write error:', e.toString());
+      return { success: false, message: 'Lỗi ghi dữ liệu: ' + e.toString() };
+    }
+    
+    console.log('✅ Payment marked successfully');
+    
+    return {
+      success: true,
+      message: 'Đã đánh dấu kỳ thanh toán',
+      paidPrincipal: totalPaidPrincipal,
+      remaining: remaining,
+      status: loanStatus
+    };
+    
+  } catch (error) {
+    console.log('❌ ERROR:', error.toString());
+    console.log('Stack:', error.stack);
+    return { 
+      success: false, 
+      message: 'Lỗi: ' + error.toString() 
+    };
+  }
+}
+
+/**
+ * Get loan notifications (upcoming due dates)
+ * @param {number} daysBeforeDue - Alert X days before due
+ * @return {Array} Notifications
+ */
+function getLoanNotifications(daysBeforeDue) {
+  try {
+    daysBeforeDue = daysBeforeDue || 7; // Default 7 days
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.LOAN);
+    if (!sheet) return [];
+    
+    var data = sheet.getDataRange().getValues();
+    var notifications = [];
+    
+    var today = new Date();
+    var alertDate = new Date();
+    alertDate.setDate(alertDate.getDate() + daysBeforeDue);
+    
+    for (var i = 1; i < data.length; i++) {
+      var status = data[i][11]; // Tình trạng
+      if (status === 'completed') continue;
+      
+      var details = data[i][12]; // Chi tiết khoản vay
+      if (!details) continue;
+      
+      try {
+        var detailsObj = typeof details === 'string' ? JSON.parse(details) : details;
+        if (!detailsObj.schedule) continue;
+        
+        for (var j = 0; j < detailsObj.schedule.length; j++) {
+          var payment = detailsObj.schedule[j];
+          if (payment.status === 'paid') continue;
+          
+          var dueDate = new Date(payment.dueDate);
+          
+          // Check if due date is within alert window
+          if (dueDate >= today && dueDate <= alertDate) {
+            var daysUntilDue = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+            
+            notifications.push({
+              loanId: data[i][0],
+              loanName: data[i][4], // Danh mục vay
+              period: payment.period,
+              dueDate: payment.dueDate,
+              daysUntilDue: daysUntilDue,
+              amount: payment.totalPayment,
+              type: daysUntilDue <= 3 ? 'urgent' : 'warning'
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing loan details:', e);
+      }
+    }
+    
+    return notifications;
+    
+  } catch (error) {
+    console.error('Error getting notifications:', error);
+    return [];
+  }
+}
