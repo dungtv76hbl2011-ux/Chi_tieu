@@ -2345,6 +2345,7 @@ function renderMonthlyComparisonChart() {
     }
   });
 }
+
 // ========== INCOME PAGE WITH FILTERS & PAGINATION ==========
 var incomeCurrentPage = 1;
 var incomeItemsPerPage = 10;
@@ -3582,124 +3583,50 @@ function changeExpenseItemsPerPage(value) {
 }
 
 function saveExpense() {
-  var id = document.getElementById('expenseId').value;
-  var date = document.getElementById('expenseDate').value;
-  var mainCategoryEl = document.getElementById('expenseMainCategory');
-  var subcategoryEl = document.getElementById('expenseSubcategory');
-  var amount = parseCurrency(document.getElementById('expenseAmount').value);
-  var description = document.getElementById('expenseDescription').value;
-  var accountId = document.getElementById('expenseAccount').value;
-  
-  // Validation
-  if (!date || !mainCategoryEl.value || !amount || !accountId) {
-    showToast('Vui lòng điền đầy đủ thông tin bắt buộc', 'error');
-    return;
-  }
-  
-  if (amount <= 0) {
-    showToast('Số tiền phải lớn hơn 0', 'error');
-    return;
-  }
+  // ... existing validation code ...
   
   showLoading();
-  closeModal();
-  
-  // Get category info
-  var mainCategoryId = mainCategoryEl.value;
-  var mainCategoryName = mainCategoryEl.options[mainCategoryEl.selectedIndex].text.replace(/[^\w\s]/gi, '').trim();
-  
-  var subcategoryName = '';
-  if (subcategoryEl && subcategoryEl.value) {
-    subcategoryName = subcategoryEl.options[subcategoryEl.selectedIndex].text.replace('├─ ', '').trim();
-  }
-  
-  var categoryData = [{
-    id: mainCategoryId,
-    name: mainCategoryName,
-    subcategory: subcategoryName
-  }];
-  
-  // Get account name
-  var accountName = '';
-  for (var i = 0; i < allAccountsData.length; i++) {
-    if (allAccountsData[i].AccountID === accountId) {
-      accountName = allAccountsData[i]['Tên tài khoản'];
-      break;
-    }
-  }
-  
-  var recordData = {
-    'ID': id || generateId('CT'),
-    'Ngày': date,
-    'Danh mục chi tiêu': JSON.stringify(categoryData),
-    'Số tiền': amount,
-    'Mô tả': description,
-    'Phương thức thanh toán': JSON.stringify([{
-      id: accountId,
-      name: accountName
-    }]),
-    'UserID': currentUser.userId,
-    'Metadata': JSON.stringify({
-      accountId: accountId,
-      mainCategoryId: mainCategoryId,
-      subcategoryId: subcategoryEl ? subcategoryEl.value : ''
-    })
-  };
-  
-  var action = id ? 'updateRecord' : 'createRecord';
-  var params = id ? 
-    {sheetName: 'Chi tiêu', id: id, data: recordData} : 
-    {sheetName: 'Chi tiêu', data: recordData};
-  
-  console.log('Saving expense:', action, params);
   
   google.script.run
     .withSuccessHandler(function(response) {
-      hideLoading();
-      
       if (response.success) {
-        showToast(id ? 'Cập nhật thành công' : 'Thêm chi tiêu thành công', 'success');
+        showToast(editingExpenseId ? 'Cập nhật thành công' : 'Thêm thành công', 'success');
+        closeModal();
         
-        // Update budget for this month
-        var month = date.substring(0, 7);
-        console.log('Triggering budget update for month:', month);
-        
-        // Silent budget update
-        google.script.run
-          .withSuccessHandler(function(budgetResponse) {
-            console.log('Budget updated:', budgetResponse);
-          })
-          .withFailureHandler(function(error) {
-            console.error('Budget update error:', error);
-          })
-          .handleRequest('updateAllBudgets', { month: month });
-        
-        // Update account balance if new expense
-        if (!id) {
-          google.script.run
-            .withSuccessHandler(function() {
-              console.log('Account balance updated');
-            })
-            .handleRequest('updateAccountBalance', {
-              accountId: accountId,
-              amount: amount,
-              type: 'subtract'
-            });
-        }
-        
-        // Reload data
+        // Reload expense data
         reloadExpenseData();
         
+        // ===== THÊM ĐOẠN NÀY =====
+        // Force refresh budget data to show updated "Chi tiêu" column
+        console.log('Refreshing budget data after expense change...');
+        setTimeout(function() {
+          DataManager.refresh('Ngân sách').then(function() {
+            allBudgetData = DataManager.getBudget();
+            console.log('✓ Budget data refreshed');
+            
+            // If user is on budget page, re-render it
+            if (currentPage === 'budget') {
+              renderBudgetPage();
+            }
+          });
+        }, 2000); // Wait 2 seconds for backend to finish calculation
+        // ===== KẾT THÚC =====
+        
       } else {
-        showToast(response.message || 'Lỗi khi lưu', 'error');
+        hideLoading();
+        showToast(response.message, 'error');
       }
     })
     .withFailureHandler(function(error) {
       hideLoading();
-      console.error('Save error:', error);
       showToast('Lỗi: ' + error.message, 'error');
     })
-    .handleRequest(action, params);
+    .handleRequest(
+      editingExpenseId ? 'updateRecord' : 'createRecord',
+      editingExpenseId ? 
+        { sheetName: 'Chi tiêu', id: editingExpenseId, data: expenseData } :
+        { sheetName: 'Chi tiêu', data: expenseData }
+    );
 }
 
 function renderExpenseTableWithPagination() {
@@ -4447,7 +4374,21 @@ function executeDeleteExpense(id) {
   google.script.run
     .withSuccessHandler(function(response) {
       if (response.success) {
+        showToast('Xóa thành công', 'success');
         reloadExpenseData();
+        
+        // ===== THÊM ĐOẠN NÀY =====
+        // Force refresh budget
+        setTimeout(function() {
+          DataManager.refresh('Ngân sách').then(function() {
+            allBudgetData = DataManager.getBudget();
+            if (currentPage === 'budget') {
+              renderBudgetPage();
+            }
+          });
+        }, 2000);
+        // ===== KẾT THÚC =====
+        
       } else {
         hideLoading();
         showToast(response.message, 'error');
@@ -4458,6 +4399,71 @@ function executeDeleteExpense(id) {
       showToast('Lỗi: ' + error.message, 'error');
     })
     .handleRequest('deleteRecord', {sheetName: 'Chi tiêu', id: id});
+}
+
+function forceUpdateAllBudgets() {
+  console.log('=== FORCE UPDATE ALL BUDGETS ===');
+  
+  // Get current month from filter or use current month
+  var month = budgetFilters.monthFrom || new Date().toISOString().substring(0, 7);
+  
+  // ===== CUSTOM MODAL THAY VÌ NATIVE CONFIRM =====
+  var modalBody = 
+    '<div style="text-align: center; padding: 20px;">' +
+      '<i class="fas fa-sync-alt" style="font-size: 48px; color: #f59e0b; margin-bottom: 20px;"></i>' +
+      '<h3 style="margin-bottom: 10px;">Cập nhật toàn bộ chi tiêu?</h3>' +
+      '<p style="color: #718096; margin-bottom: 5px;">Tháng: <strong>' + month + '</strong></p>' +
+      '<p style="color: #718096; font-size: 14px;">Hệ thống sẽ tính lại cột "Chi tiêu" từ bảng Chi tiêu</p>' +
+    '</div>';
+  
+  var modalFooter = 
+    '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-warning" onclick="executeUpdateAllBudgets(\'' + month + '\')">Cập nhật ngay</button>';
+  
+  openModal('Xác nhận cập nhật', modalBody, modalFooter);
+}
+
+/**
+ * Execute budget update after confirmation
+ * @param {string} month - Month to update (YYYY-MM)
+ */
+function executeUpdateAllBudgets(month) {
+  console.log('Executing update for month:', month);
+  
+  closeModal();
+  showLoading('Đang cập nhật ngân sách...');
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      hideLoading();
+      
+      console.log('Update response:', response);
+      
+      if (response.success) {
+        showToast('Đã cập nhật ' + response.updated + ' ngân sách', 'success');
+        
+        // Reload budget data
+        console.log('Reloading budget data...');
+        DataManager.refresh('Ngân sách').then(function() {
+          allBudgetData = DataManager.getBudget();
+          console.log('✓ Budget data reloaded:', allBudgetData.length, 'records');
+          
+          // Re-render page
+          renderBudgetPage();
+        }).catch(function(error) {
+          console.error('Error reloading budget:', error);
+          showToast('Lỗi reload: ' + error.message, 'error');
+        });
+      } else {
+        showToast('Lỗi: ' + response.message, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Backend error:', error);
+      showToast('Lỗi kết nối: ' + error.message, 'error');
+    })
+    .handleRequest('updateAllBudgets', { month: month });
 }
 
 function reloadExpenseData() {
@@ -4754,6 +4760,35 @@ function clearBudgetFilters() {
   
   renderBudgetPage();
 }
+
+// ===== THÊM FUNCTION NÀY =====
+/**
+ * Restore budget filters from budgetFilters object
+ * Called after page refresh to maintain filter state
+ */
+function restoreBudgetFilters() {
+  console.log('Restoring budget filters:', budgetFilters);
+  
+  // Restore month from filter
+  var monthFromEl = document.getElementById('budgetFilterMonthFrom');
+  var monthToEl = document.getElementById('budgetFilterMonthTo');
+  var categoryEl = document.getElementById('budgetFilterCategory');
+  
+  if (monthFromEl && budgetFilters.monthFrom) {
+    monthFromEl.value = budgetFilters.monthFrom;
+  }
+  
+  if (monthToEl && budgetFilters.monthTo) {
+    monthToEl.value = budgetFilters.monthTo;
+  }
+  
+  if (categoryEl && budgetFilters.category) {
+    categoryEl.value = budgetFilters.category;
+  }
+  
+  console.log('✓ Budget filters restored');
+}
+// ===== KẾT THÚC =====
 
 function changeBudgetItemsPerPage(value) {
   budgetItemsPerPage = parseInt(value);
@@ -5917,6 +5952,63 @@ function applyBudgetFilters() {
   console.log('Filtered data count:', budgetFilteredData.length);
 }
 
+// ========================================
+// BUDGET PAGE - HELPER FUNCTIONS
+// ========================================
+
+/**
+ * Render budget category options for dropdown
+ * @param {Array} categories - Array of budget categories
+ * @param {string} selectedId - Selected category ID
+ * @return {string} HTML options
+ */
+function renderBudgetCategoryOptions(categories, selectedId) {
+  var html = '<option value="">-- Chọn danh mục --</option>';
+  
+  if (!categories || categories.length === 0) {
+    return html;
+  }
+  
+  for (var i = 0; i < categories.length; i++) {
+    var cat = categories[i];
+    var selected = cat.id === selectedId ? ' selected' : '';
+    var icon = cat.icon ? cat.icon + ' ' : '';
+    
+    html += '<option value="' + cat.id + '"' + selected + '>' + 
+            icon + cat.name + 
+            '</option>';
+  }
+  
+  return html;
+}
+
+/**
+ * Render budget subcategory options
+ * @param {string} parentId - Parent category ID
+ * @param {string} selectedSubcategory - Selected subcategory name
+ * @return {string} HTML options
+ */
+function renderBudgetSubcategoryOptions(parentId, selectedSubcategory) {
+  var html = '<option value="">-- Không chọn danh mục con --</option>';
+  
+  if (!parentId || !budgetSubcategories[parentId]) {
+    return html;
+  }
+  
+  var subcats = budgetSubcategories[parentId];
+  
+  for (var i = 0; i < subcats.length; i++) {
+    var subcat = subcats[i];
+    var selected = subcat === selectedSubcategory ? ' selected' : '';
+    
+    html += '<option value="' + subcat + '"' + selected + '>├─ ' + 
+            subcat + 
+            '</option>';
+  }
+  
+  return html;
+}
+
 // ========== CALCULATE SUMMARY ==========
 function renderBudgetSummary() {
   var totalPlanned = 0;
@@ -6968,6 +7060,293 @@ function processBudgetImport() {
   };
   
   reader.readAsArrayBuffer(file);
+}
+
+function calculateBudgetSpent(budgetId, month) {
+  try {
+    Logger.log('=== calculateBudgetSpent START ===');
+    Logger.log('BudgetID: ' + budgetId);
+    Logger.log('Month: ' + month);
+    
+    var budgetSheet = getSheet(CONFIG.SHEET_NAMES.BUDGET);
+    var expenseSheet = getSheet(CONFIG.SHEET_NAMES.EXPENSE);
+    
+    if (!budgetSheet || !expenseSheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    // Get budget info
+    var budgetData = budgetSheet.getDataRange().getValues();
+    var budgetRow = -1;
+    var budgetCategoryId = '';
+    var budgetSubcategoryName = '';
+    
+    Logger.log('Searching for budget ID: ' + budgetId);
+    Logger.log('Total budget rows: ' + budgetData.length);
+    
+    for (var i = 1; i < budgetData.length; i++) {
+      if (budgetData[i][0] === budgetId) {
+        budgetRow = i;
+        
+        Logger.log('✓ Budget found at row: ' + (i + 1));
+        Logger.log('Budget category column value: ' + budgetData[i][3]);
+        
+        // Parse category
+        try {
+          var catJson = typeof budgetData[i][3] === 'string' ? 
+            JSON.parse(budgetData[i][3]) : budgetData[i][3];
+          
+          Logger.log('Parsed category JSON: ' + JSON.stringify(catJson));
+          
+          if (catJson && catJson[0]) {
+            budgetCategoryId = catJson[0].id || '';
+            budgetSubcategoryName = catJson[0].subcategory || '';
+            
+            Logger.log('Budget CategoryID: ' + budgetCategoryId);
+            Logger.log('Budget Subcategory: ' + budgetSubcategoryName);
+          } else {
+            Logger.log('⚠️ catJson is empty or invalid');
+          }
+        } catch(e) {
+          Logger.log('❌ Error parsing budget category: ' + e.toString());
+        }
+        break;
+      }
+    }
+    
+    if (budgetRow < 0) {
+      Logger.log('❌ Budget not found');
+      return { success: false, message: 'Không tìm thấy ngân sách' };
+    }
+    
+    // Calculate total spent from Expense sheet
+    var expenseData = expenseSheet.getDataRange().getValues();
+    var totalSpent = 0;
+    var matchedCount = 0;
+    
+    Logger.log('--- Checking expenses ---');
+    Logger.log('Total expense rows: ' + (expenseData.length - 1));
+    
+    for (var i = 1; i < expenseData.length; i++) {
+      var expenseDate = expenseData[i][1];
+      var expenseAmount = parseFloat(expenseData[i][3]) || 0;
+      var expenseCategoryRaw = expenseData[i][2];
+      
+      // Check month
+      var expenseMonth = '';
+      if (expenseDate instanceof Date) {
+        expenseMonth = expenseDate.getFullYear() + '-' + 
+          String(expenseDate.getMonth() + 1).padStart(2, '0');
+      } else if (typeof expenseDate === 'string') {
+        if (expenseDate.indexOf('-') > -1) {
+          expenseMonth = expenseDate.substring(0, 7);
+        }
+      }
+      
+      if (expenseMonth !== month) {
+        continue; // Skip wrong month
+      }
+      
+      // ===== LOG CHI TIẾT TỪNG EXPENSE =====
+      Logger.log('');
+      Logger.log('--- Expense #' + (i + 1) + ' ---');
+      Logger.log('Date: ' + expenseDate + ' → Month: ' + expenseMonth);
+      Logger.log('Amount: ' + expenseAmount);
+      Logger.log('Category raw: ' + expenseCategoryRaw);
+      
+      // Check category match
+      try {
+        var expenseCat = typeof expenseCategoryRaw === 'string' ? 
+          JSON.parse(expenseCategoryRaw) : expenseCategoryRaw;
+        
+        Logger.log('Parsed expense category: ' + JSON.stringify(expenseCat));
+        
+        if (expenseCat && expenseCat[0]) {
+          var expenseCategoryId = expenseCat[0].id || '';
+          var expenseSubcategoryName = expenseCat[0].subcategory || '';
+          
+          Logger.log('Expense CategoryID: "' + expenseCategoryId + '"');
+          Logger.log('Expense Subcategory: "' + expenseSubcategoryName + '"');
+          Logger.log('Budget CategoryID: "' + budgetCategoryId + '"');
+          Logger.log('Budget Subcategory: "' + budgetSubcategoryName + '"');
+          
+          // ===== MATCHING LOGIC =====
+          var isMatch = false;
+          
+          if (budgetSubcategoryName) {
+            // Budget có subcategory → match cả main + sub
+            isMatch = (expenseCategoryId === budgetCategoryId) && 
+                      (expenseSubcategoryName === budgetSubcategoryName);
+            Logger.log('Match type: Main + Sub');
+          } else {
+            // Budget chỉ có main category → match main category only
+            isMatch = (expenseCategoryId === budgetCategoryId);
+            Logger.log('Match type: Main only');
+          }
+          
+          Logger.log('Is Match: ' + isMatch);
+          
+          if (isMatch) {
+            totalSpent += expenseAmount;
+            matchedCount++;
+            Logger.log('✓ MATCHED! Total spent now: ' + totalSpent);
+          } else {
+            Logger.log('✗ NOT MATCHED');
+          }
+        } else {
+          Logger.log('⚠️ expenseCat is empty or invalid');
+        }
+      } catch(e) {
+        Logger.log('❌ Error parsing expense category: ' + e.toString());
+      }
+    }
+    
+    Logger.log('');
+    Logger.log('=== FINAL RESULT ===');
+    Logger.log('Total matched expenses: ' + matchedCount);
+    Logger.log('Total spent: ' + totalSpent);
+    
+    // Update budget
+    var planned = parseFloat(budgetData[budgetRow][4]) || 0;
+    var remaining = planned - totalSpent;
+    var percentage = planned > 0 ? Math.round((totalSpent / planned) * 100) : 0;
+    var ratio = planned > 0 ? totalSpent / planned : 0;
+    
+    Logger.log('Planned: ' + planned);
+    Logger.log('Remaining: ' + remaining);
+    Logger.log('Percentage: ' + percentage + '%');
+    
+    var status = 'on-track';
+    var alerts = [];
+    
+    if (percentage >= 100) {
+      status = 'exceeded';
+      alerts.push('Đã vượt ngân sách');
+    } else if (percentage >= 90) {
+      status = 'warning';
+      alerts.push('Sắp vượt ngân sách');
+    }
+    
+    // Update sheet
+    budgetSheet.getRange(budgetRow + 1, 6).setValue(totalSpent);
+    budgetSheet.getRange(budgetRow + 1, 7).setValue(ratio);
+    
+    var metadata = {
+      categoryName: budgetData[budgetRow][3],
+      remaining: remaining,
+      percentage: percentage,
+      status: status,
+      alerts: alerts,
+      lastUpdated: new Date().toISOString(),
+      matchedExpenses: matchedCount
+    };
+    
+    budgetSheet.getRange(budgetRow + 1, 8).setValue(JSON.stringify(metadata));
+    
+    Logger.log('✅ Budget updated successfully');
+    
+    return {
+      success: true,
+      spent: totalSpent,
+      planned: planned,
+      remaining: remaining,
+      percentage: percentage,
+      status: status,
+      matchedCount: matchedCount
+    };
+    
+  } catch (error) {
+    Logger.log('❌ ERROR: ' + error.toString());
+    Logger.log('Stack: ' + error.stack);
+    return { success: false, message: error.toString() };
+  }
+}
+
+function updateAllBudgets(month) {
+  try {
+    Logger.log('=== UPDATE ALL BUDGETS ===');
+    Logger.log('Month: ' + month);
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.BUDGET);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    Logger.log('Total budget rows: ' + data.length);
+    
+    var monthsToUpdate = [];
+    var budgetsToUpdate = [];
+    
+    // Find all budgets for this month
+    for (var i = 1; i < data.length; i++) {
+      var budgetId = data[i][0];
+      var budgetMonth = data[i][2];
+      
+      // Normalize month format
+      if (typeof budgetMonth === 'string' && budgetMonth.length > 7) {
+        budgetMonth = budgetMonth.substring(0, 7);
+      }
+      
+      Logger.log('Budget #' + (i + 1) + ': ID=' + budgetId + ', Month=' + budgetMonth);
+      
+      if (budgetMonth === month) {
+        monthsToUpdate.push(budgetMonth);
+        budgetsToUpdate.push({ id: budgetId, month: budgetMonth, row: i });
+        Logger.log('✓ Will update budget: ' + budgetId);
+      }
+    }
+    
+    Logger.log('');
+    Logger.log('Found ' + budgetsToUpdate.length + ' budgets to update');
+    
+    if (budgetsToUpdate.length === 0) {
+      Logger.log('⚠️ No budgets found for month: ' + month);
+      return {
+        success: true,
+        message: 'Không tìm thấy ngân sách cho tháng ' + month,
+        updated: 0,
+        errors: 0
+      };
+    }
+    
+    var updated = 0;
+    var errors = 0;
+    
+    // Update each budget
+    for (var i = 0; i < budgetsToUpdate.length; i++) {
+      var budget = budgetsToUpdate[i];
+      
+      Logger.log('');
+      Logger.log('=== Updating budget ' + (i + 1) + '/' + budgetsToUpdate.length + ' ===');
+      
+      var result = calculateBudgetSpent(budget.id, budget.month);
+      
+      if (result.success) {
+        updated++;
+        Logger.log('✓ Updated: ' + budget.id + ', Spent: ' + result.spent);
+      } else {
+        errors++;
+        Logger.log('✗ Failed: ' + budget.id + ', Error: ' + result.message);
+      }
+    }
+    
+    Logger.log('');
+    Logger.log('=== UPDATE COMPLETE ===');
+    Logger.log('Success: ' + updated);
+    Logger.log('Errors: ' + errors);
+    
+    return {
+      success: true,
+      message: 'Đã cập nhật ' + updated + ' ngân sách',
+      updated: updated,
+      errors: errors
+    };
+    
+  } catch (error) {
+    Logger.log('❌ ERROR in updateAllBudgets: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
 }
 
 // ========== INITIALIZATION ==========
