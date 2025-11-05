@@ -1,1 +1,354 @@
+<script>
 
+
+// ========== ACCOUNTS PAGE ==========
+function showAccountsPage() {
+  var html = '<div class="card">' +
+    '<div class="card-header">' +
+    '<h2 class="card-title">Danh sách Tài khoản</h2>' +
+    '<div style="display: flex; gap: 10px;">' +
+    '<button class="btn-warning" onclick="openTransferModal()">' +
+    '<i class="fas fa-exchange-alt"></i> Chuyển tiền' +
+    '</button>' +
+    '<button class="btn-primary" onclick="openAccountModal()">' +
+    '<i class="fas fa-plus"></i> Thêm tài khoản' +
+    '</button>' +
+    '</div>' +
+    '</div>' +
+    '<table>' +
+    '<thead>' +
+    '<tr>' +
+    '<th>ID</th>' +
+    '<th>Loại</th>' +
+    '<th>Tên</th>' +
+    '<th>Số dư đầu kỳ</th>' +
+    '<th>Số dư hiện tại</th>' +
+    '<th>Hành động</th>' +
+    '</tr>' +
+    '</thead>' +
+    '<tbody>' + renderAccountsTable() + '</tbody>' +
+    '</table>' +
+    '</div>';
+  
+  document.getElementById('contentWrapper').innerHTML = html;
+}
+
+function renderAccountsTable() {
+  if (!allAccountsData || allAccountsData.length === 0) {
+    return '<tr><td colspan="6" class="text-center">Chưa có dữ liệu</td></tr>';
+  }
+  
+  var html = '';
+  
+  for (var i = 0; i < allAccountsData.length; i++) {
+    var item = allAccountsData[i];
+    html += '<tr>' +
+      '<td>' + item.AccountID + '</td>' +
+      '<td>' + item['Loại'] + '</td>' +
+      '<td>' + item['Tên tài khoản'] + '</td>' +
+      '<td>' + formatCurrency(item['Số dư đầu kỳ']) + ' đ</td>' +
+      '<td style="font-weight: 600; color: #3782f4;">' + formatCurrency(item['Số dư hiện tại']) + ' đ</td>' +
+      '<td class="action-buttons">' +
+      '<button class="btn-primary btn-sm" onclick="editAccount(\'' + item.AccountID + '\')"><i class="fas fa-edit"></i></button>' +
+      '<button class="btn-danger btn-sm" onclick="deleteAccount(\'' + item.AccountID + '\')"><i class="fas fa-trash"></i></button>' +
+      '</td></tr>';
+  }
+  
+  return html;
+}
+
+function openAccountModal(id) {
+  var isEdit = !!id;
+  var item = {};
+  
+  if (isEdit) {
+    for (var i = 0; i < allAccountsData.length; i++) {
+      if (allAccountsData[i].AccountID === id) {
+        item = allAccountsData[i];
+        break;
+      }
+    }
+  }
+  
+  var body = '<div class="form-group"><label>Loại tài khoản</label><select id="accountType" class="form-control">' +
+    '<option value="Tiền mặt">Tiền mặt</option><option value="Ngân hàng">Ngân hàng</option><option value="Ví điện tử">Ví điện tử</option></select></div>' +
+    '<div class="form-group"><label>Tên tài khoản</label><input type="text" id="accountName" class="form-control" value="' + (item['Tên tài khoản'] || '') + '"></div>' +
+    '<div class="form-group"><label>Số dư đầu kỳ (VNĐ)</label><input type="text" id="accountInitialBalance" class="form-control currency-input" value="' + (isEdit ? formatCurrency(item['Số dư đầu kỳ']) : '0') + '"></div>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()">Hủy</button><button class="btn-primary" onclick="saveAccount(\'' + (id || '') + '\')">Lưu</button>';
+  
+  openModal(isEdit ? 'Sửa tài khoản' : 'Thêm tài khoản', body, footer);
+  
+  setTimeout(function() { 
+    setupCurrencyInput(document.getElementById('accountInitialBalance')); 
+  }, 100);
+}
+
+function saveAccount(id) {
+  var type = document.getElementById('accountType').value;
+  var name = document.getElementById('accountName').value;
+  var initialBalance = parseCurrency(document.getElementById('accountInitialBalance').value);
+  
+  if (!name) {
+    showToast('Vui lòng nhập tên tài khoản', 'error');
+    return;
+  }
+  
+  var data = {
+    'AccountID': id || generateId('ACC'),
+    'UserID': currentUser.userId,
+    'Loại': type,
+    'Tên tài khoản': name,
+    'Số dư đầu kỳ': initialBalance,
+    'Số dư hiện tại': initialBalance,
+    'Metadata': JSON.stringify({})
+  };
+  
+  showLoading();
+  
+  var action = id ? 'updateRecord' : 'createRecord';
+  var params = id ? {sheetName: 'Tài khoản', id: id, data: data} : {sheetName: 'Tài khoản', data: data};
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response.success) {
+        loadSheetData('Tài khoản').then(function(data) {
+          allAccountsData = data;
+          hideLoading();
+          closeModal();
+          showAccountsPage();
+          showToast('Thành công', 'success');
+        });
+      } else {
+        hideLoading();
+        showToast(response.message, 'error');
+      }
+    })
+    .handleRequest(action, params);
+}
+
+function editAccount(id) { 
+  openAccountModal(id); 
+}
+
+function deleteAccount(id) {
+  if (!confirm('Bạn có chắc muốn xóa?')) return;
+  showLoading();
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response.success) {
+        loadSheetData('Tài khoản').then(function(data) {
+          allAccountsData = data;
+          hideLoading();
+          showAccountsPage();
+          showToast('Xóa thành công', 'success');
+        });
+      } else {
+        hideLoading();
+        showToast(response.message, 'error');
+      }
+    })
+    .handleRequest('deleteRecord', {sheetName: 'Tài khoản', id: id});
+}
+
+// ========== HELPER FUNCTIONS ==========
+function renderAccountOptions() {
+  var html = '<option value="">-- Chọn tài khoản --</option>';
+  
+  if (!allAccountsData || allAccountsData.length === 0) {
+    return html;
+  }
+  
+  for (var i = 0; i < allAccountsData.length; i++) {
+    var acc = allAccountsData[i];
+    html += '<option value="' + acc.AccountID + '">' + acc['Tên tài khoản'] + ' (' + formatCurrency(acc['Số dư hiện tại']) + ' đ)</option>';
+  }
+  
+  return html;
+}
+
+function getAccountName(accountId) {
+  if (!accountId) return 'N/A';
+  if (!allAccountsData || allAccountsData.length === 0) return 'N/A';
+  
+  for (var i = 0; i < allAccountsData.length; i++) {
+    if (allAccountsData[i].AccountID === accountId) {
+      return allAccountsData[i]['Tên tài khoản'] || 'N/A';
+    }
+  }
+  
+  return 'N/A';
+}
+
+function getCategoryName(categoryJson) {
+  if (!categoryJson) return 'N/A';
+  
+  try {
+    var cat = typeof categoryJson === 'string' ? JSON.parse(categoryJson) : categoryJson;
+    if (Array.isArray(cat) && cat.length > 0 && cat[0].name) {
+      return cat[0].name;
+    }
+    return 'N/A';
+  } catch(e) {
+    return 'N/A';
+  }
+}
+
+function getCategoryLabel(categoryId) {
+  var labels = {
+    // Income categories
+    'salary': 'Lương',
+    'bonus': 'Thưởng',
+    'investment': 'Đầu tư',
+    'freelance': 'Freelance',
+    // Expense categories
+    'food': 'Ăn uống',
+    'transport': 'Di chuyển',
+    'shopping': 'Mua sắm',
+    'education': 'Học tập',
+    'health': 'Y tế',
+    'entertainment': 'Giải trí',
+    'other': 'Khác'
+  };
+  
+  return labels[categoryId] || categoryId;
+}
+
+// ========== TRANSFER MONEY BETWEEN ACCOUNTS ==========
+function openTransferModal() {
+  if (!allAccountsData || allAccountsData.length < 2) {
+    showToast('Cần ít nhất 2 tài khoản để chuyển tiền', 'error');
+    return;
+  }
+  
+  var accountOptions = '<option value="">-- Chọn tài khoản --</option>';
+  
+  for (var i = 0; i < allAccountsData.length; i++) {
+    var acc = allAccountsData[i];
+    accountOptions += '<option value="' + acc.AccountID + '">' + 
+      acc['Tên tài khoản'] + ' (' + formatCurrency(acc['Số dư hiện tại']) + ' đ)</option>';
+  }
+  
+  var body = '<div class="form-group">' +
+    '<label><i class="fas fa-arrow-up"></i> Từ tài khoản</label>' +
+    '<select id="transferFromAccount" class="form-control">' + accountOptions + '</select>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-arrow-down"></i> Đến tài khoản</label>' +
+    '<select id="transferToAccount" class="form-control">' + accountOptions + '</select>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-money-bill-wave"></i> Số tiền (VNĐ)</label>' +
+    '<input type="text" id="transferAmount" class="form-control currency-input" value="0">' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-comment"></i> Mô tả (tùy chọn)</label>' +
+    '<textarea id="transferDescription" class="form-control" rows="2" placeholder="Ghi chú về giao dịch..."></textarea>' +
+    '</div>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-warning" onclick="processTransfer()"><i class="fas fa-exchange-alt"></i> Chuyển tiền</button>';
+  
+  openModal('Chuyển tiền giữa tài khoản', body, footer);
+  
+  setTimeout(function() { 
+    setupCurrencyInput(document.getElementById('transferAmount')); 
+  }, 100);
+}
+
+function processTransfer() {
+  var fromAccountId = document.getElementById('transferFromAccount').value;
+  var toAccountId = document.getElementById('transferToAccount').value;
+  var amount = parseCurrency(document.getElementById('transferAmount').value);
+  var description = document.getElementById('transferDescription').value || 'Chuyển tiền';
+  
+  if (!fromAccountId || !toAccountId) {
+    showToast('Vui lòng chọn tài khoản nguồn và đích', 'error');
+    return;
+  }
+  
+  if (fromAccountId === toAccountId) {
+    showToast('Không thể chuyển đến cùng tài khoản', 'error');
+    return;
+  }
+  
+  if (amount <= 0) {
+    showToast('Số tiền phải lớn hơn 0', 'error');
+    return;
+  }
+  
+  // Kiểm tra số dư
+  var fromAccount = null;
+  for (var i = 0; i < allAccountsData.length; i++) {
+    if (allAccountsData[i].AccountID === fromAccountId) {
+      fromAccount = allAccountsData[i];
+      break;
+    }
+  }
+  
+  if (!fromAccount) {
+    showToast('Không tìm thấy tài khoản nguồn', 'error');
+    return;
+  }
+  
+  if (amount > parseCurrency(fromAccount['Số dư hiện tại'])) {
+    showToast('Số dư tài khoản nguồn không đủ', 'error');
+    return;
+  }
+  
+  closeModal();
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response.success) {
+        // Reload accounts data
+        loadSheetData('Tài khoản').then(function(data) {
+          allAccountsData = data;
+          hideLoading();
+          showAccountsPage();
+          showToast('Chuyển tiền thành công!', 'success');
+        }).catch(function(error) {
+          hideLoading();
+          showToast('Lỗi tải dữ liệu', 'error');
+        });
+      } else {
+        hideLoading();
+        showToast(response.message || 'Chuyển tiền thất bại', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .handleRequest('transferMoney', {
+      fromAccountId: fromAccountId,
+      toAccountId: toAccountId,
+      amount: amount,
+      description: description
+    });
+}
+
+// Test Accounts Page
+(async function testAccountsPage() {
+  console.log('=== Testing Accounts Page ===');
+  
+  if (!DataManager.isInitialized()) {
+    await DataManager.initialize();
+    syncLegacyVariables();
+  }
+  
+  showAccountsPage();
+  
+  setTimeout(() => {
+    var cards = document.querySelectorAll('.account-card');
+    console.assert(cards.length > 0, 'Should have account cards');
+    
+    console.log('✅ Accounts page tests passed');
+  }, 500);
+})();
+
+</script>
