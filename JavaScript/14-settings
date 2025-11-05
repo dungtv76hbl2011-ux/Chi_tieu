@@ -1,1 +1,847 @@
+<script>
 
+// SETTINGS PAGE - CATEGORY MANAGEMENT
+// ========================================
+
+function showSettingsPage() {
+  console.log('=== SHOWING SETTINGS PAGE ===');
+  
+  currentSettingsTab = 'expense'; // Default tab
+  
+  var html = '<div class="card">';
+  html += '<div class="card-header">';
+  html += '<h2 class="card-title">Quản lý Danh mục</h2>';
+  html += '</div>';
+  
+  // Tab navigation
+  html += '<div style="display: flex; gap: 10px; padding: 20px; border-bottom: 1px solid #e5e7eb;">';
+  html += '<button class="btn-primary" id="tabExpense" onclick="switchSettingsTab(\'expense\')">Chi tiêu</button>';
+  html += '<button class="btn-secondary" id="tabIncome" onclick="switchSettingsTab(\'income\')">Thu nhập</button>';
+  html += '<button class="btn-secondary" id="tabBudget" onclick="switchSettingsTab(\'budget\')">Ngân sách</button>';
+  html += '</div>';
+  
+  // Category list container
+  html += '<div id="categoryListContainer" style="padding: 20px;">';
+  html += '<div style="text-align: center; padding: 40px;"><i class="fas fa-spinner fa-spin" style="font-size: 32px; color: #3782f4;"></i></div>';
+  html += '</div>';
+  
+  html += '</div>';
+  
+  document.getElementById('contentWrapper').innerHTML = html;
+  
+  // Load categories for default tab
+  loadCategoriesForTab('expense');
+}
+
+function loadCategoriesForTab(type) {
+  console.log('=== LOADING CATEGORIES FOR TAB: ' + type + ' ===');
+  
+  showLoading();
+  
+  // Load ALL categories (main + sub) for this type
+  google.script.run
+    .withSuccessHandler(function(response) {
+      console.log('Categories response:', response);
+      
+      if (response && response.success) {
+        var allCats = response.data || [];
+        
+        // Phân loại main và sub
+        var mainCategories = [];
+        var subCategoriesMap = {}; // { parentId: [subcategories] }
+        
+        for (var i = 0; i < allCats.length; i++) {
+          var cat = allCats[i];
+          
+          if (!cat.parentId || cat.parentId === 'null' || cat.parentId === '') {
+            // Main category
+            mainCategories.push(cat);
+            subCategoriesMap[cat.id] = []; // Initialize empty array
+          } else {
+            // Subcategory
+            if (!subCategoriesMap[cat.parentId]) {
+              subCategoriesMap[cat.parentId] = [];
+            }
+            subCategoriesMap[cat.parentId].push(cat);
+          }
+        }
+        
+        console.log('Main categories:', mainCategories.length);
+        console.log('Subcategories map:', subCategoriesMap);
+        
+        // Render
+        renderCategoryTree(mainCategories, subCategoriesMap);
+        
+        hideLoading();
+      } else {
+        console.error('Failed to load categories:', response?.message);
+        hideLoading();
+        showToast('Lỗi tải danh mục', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      console.error('Error loading categories:', error);
+      hideLoading();
+      showToast('Lỗi kết nối', 'error');
+    })
+    .handleRequest('getAllCategoriesByType', { 
+      type: type,
+      userId: getCurrentUserId()
+    });
+}
+
+function loadAllCategories() {
+  showLoading('Đang tải danh mục...');
+  
+  // Refresh categories from server
+  Promise.all([
+    DataManager.refreshCategories('expense'),
+    DataManager.refreshCategories('income'),
+    DataManager.refreshCategories('budget')
+  ])
+  .then(results => {
+    allCategories = [...results[0], ...results[1], ...results[2]];
+    
+    console.log('✅ Categories loaded:', allCategories.length);
+    
+    hideLoading();
+    renderSettingsPage();
+  })
+  .catch(error => {
+    console.error('❌ Load categories error:', error);
+    hideLoading();
+    showToast('Lỗi tải danh mục', 'error');
+  });
+}
+
+function renderSettingsPage() {
+  console.log('=== RENDERING SETTINGS PAGE ===');
+  console.log('Current tab:', currentSettingsTab);
+  console.log('Categories:', allCategories.length);
+  
+  var html = '<div class="card">' +
+    '<div class="card-header">' +
+    '<h2 class="card-title">Cài đặt - Quản lý Danh mục</h2>' +
+    '</div>' +
+    
+    // TABS
+    '<div style="background: #f7fafc; padding: 15px; border-bottom: 2px solid #e2e8f0;">' +
+    '<div style="display: flex; gap: 10px; flex-wrap: wrap;">' +
+    
+    '<button class="' + (currentSettingsTab === 'expense' ? 'btn-primary' : 'btn-secondary') + '" ' +
+    'onclick="switchSettingsTab(\'expense\')" style="padding: 8px 20px;">' +
+    '<i class="fas fa-shopping-cart"></i> Chi tiêu' +
+    '</button>' +
+    
+    '<button class="' + (currentSettingsTab === 'income' ? 'btn-primary' : 'btn-secondary') + '" ' +
+    'onclick="switchSettingsTab(\'income\')" style="padding: 8px 20px;">' +
+    '<i class="fas fa-money-bill-wave"></i> Thu nhập' +
+    '</button>' +
+    
+    '<button class="' + (currentSettingsTab === 'budget' ? 'btn-primary' : 'btn-secondary') + '" ' +
+    'onclick="switchSettingsTab(\'budget\')" style="padding: 8px 20px;">' +
+    '<i class="fas fa-chart-pie"></i> Ngân sách' +
+    '</button>' +
+    
+    '</div>' +
+    '</div>' +
+    
+    // CATEGORY TREE
+    '<div style="padding: 20px;">' +
+    
+    '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">' +
+    '<h3 style="margin: 0; color: #1f2937;">Danh sách danh mục</h3>' +
+    '<button class="btn-primary" onclick="openAddCategoryModal(null)">' +
+    '<i class="fas fa-plus"></i> Thêm danh mục chính' +
+    '</button>' +
+    '</div>' +
+    
+    '<div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">' +
+    renderCategoryTree() +
+    '</div>' +
+    
+    '</div>' +
+    
+    '</div>';
+  
+  document.getElementById('contentWrapper').innerHTML = html;
+}
+
+function renderCategoryTree(mainCategories, subCategoriesMap) {
+  console.log('=== RENDERING CATEGORY TREE ===');
+  
+  var html = '';
+  
+  // Add new category button
+  html += '<div style="margin-bottom: 20px;">';
+  html += '<button class="btn-primary" onclick="openAddCategoryModal()">';
+  html += '<i class="fas fa-plus"></i> Thêm danh mục chính';
+  html += '</button>';
+  html += '</div>';
+  
+  if (!mainCategories || mainCategories.length === 0) {
+    html += '<div style="text-align: center; padding: 40px; color: #718096;">';
+    html += '<i class="fas fa-folder-open" style="font-size: 48px; margin-bottom: 10px;"></i>';
+    html += '<p>Chưa có danh mục nào</p>';
+    html += '</div>';
+    
+    document.getElementById('categoryListContainer').innerHTML = html;
+    return;
+  }
+  
+  // Render category tree
+  html += '<div class="category-tree">';
+  
+  for (var i = 0; i < mainCategories.length; i++) {
+    var mainCat = mainCategories[i];
+    var subcategories = subCategoriesMap[mainCat.id] || [];
+    
+    html += '<div class="category-item main-category" data-category-id="' + mainCat.id + '">';
+    
+    // Main category row
+    html += '<div class="category-row">';
+    html += '<div class="category-info">';
+    html += '<div class="category-icon" style="background: ' + (mainCat.color || '#6b7280') + ';">';
+    html += mainCat.icon || '📁';
+    html += '</div>';
+    html += '<span class="category-name">' + mainCat.name + '</span>';
+    
+    if (subcategories.length > 0) {
+      html += '<span class="badge-count">' + subcategories.length + '</span>';
+    }
+    
+    html += '</div>';
+    
+    // Action buttons
+    html += '<div class="category-actions">';
+    html += '<button class="btn-icon-small" onclick="openAddSubcategoryModal(\'' + mainCat.id + '\', \'' + mainCat.name + '\')" title="Thêm danh mục con">';
+    html += '<i class="fas fa-plus"></i>';
+    html += '</button>';
+    html += '<button class="btn-icon-small" onclick="editCategory(\'' + mainCat.id + '\')" title="Sửa">';
+    html += '<i class="fas fa-edit"></i>';
+    html += '</button>';
+    html += '<button class="btn-icon-small btn-danger-outline" onclick="deleteCategory(\'' + mainCat.id + '\')" title="Xóa">';
+    html += '<i class="fas fa-trash"></i>';
+    html += '</button>';
+    html += '</div>';
+    
+    html += '</div>'; // End category-row
+    
+    // Render subcategories
+    if (subcategories.length > 0) {
+      html += '<div class="subcategories">';
+      
+      for (var j = 0; j < subcategories.length; j++) {
+        var subCat = subcategories[j];
+        
+        html += '<div class="category-item sub-category">';
+        html += '<div class="category-row">';
+        html += '<div class="category-info">';
+        html += '<span class="category-name">├─ ' + subCat.name + '</span>';
+        html += '</div>';
+        
+        html += '<div class="category-actions">';
+        html += '<button class="btn-icon-small" onclick="editCategory(\'' + subCat.id + '\')" title="Sửa">';
+        html += '<i class="fas fa-edit"></i>';
+        html += '</button>';
+        html += '<button class="btn-icon-small btn-danger-outline" onclick="deleteCategory(\'' + subCat.id + '\')" title="Xóa">';
+        html += '<i class="fas fa-trash"></i>';
+        html += '</button>';
+        html += '</div>';
+        
+        html += '</div>'; // End category-row
+        html += '</div>'; // End sub-category
+      }
+      
+      html += '</div>'; // End subcategories
+    }
+    
+    html += '</div>'; // End main-category
+  }
+  
+  html += '</div>'; // End category-tree
+  
+  document.getElementById('categoryListContainer').innerHTML = html;
+  
+  console.log('✅ Category tree rendered');
+}
+
+function renderSubcategories(parentId) {
+  console.log('=== RENDERING SUBCATEGORIES for parent:', parentId);
+  
+  // Filter danh mục con dựa trên parentId
+  var subcategories = allCategories.filter(function(cat) {
+    return cat.parentId === parentId;
+  });
+  
+  console.log('Found', subcategories.length, 'subcategories');
+  
+  if (subcategories.length === 0) {
+    return '<div style="padding: 10px; color: #9ca3af; font-size: 13px;">Chưa có danh mục con</div>';
+  }
+  
+  var html = '';
+  
+  for (var i = 0; i < subcategories.length; i++) {
+    var cat = subcategories[i];
+    
+    console.log('- Subcategory:', cat.name);
+    
+    html += '<div class="category-item sub-category">' +
+      '<div class="category-row">' +
+      
+      '<div class="category-info">' +
+      '<span class="category-name">├─ ' + cat.name + '</span>' +
+      '</div>' +
+      
+      '<div class="category-actions">' +
+      '<button class="btn-icon-small" onclick="openEditCategoryModal(\'' + cat.id + '\')" title="Sửa">' +
+      '<i class="fas fa-edit"></i>' +
+      '</button>' +
+      '<button class="btn-icon-small btn-danger-outline" onclick="confirmDeleteCategory(\'' + cat.id + '\')" title="Xóa">' +
+      '<i class="fas fa-trash"></i>' +
+      '</button>' +
+      '</div>' +
+      
+      '</div>' +
+      '</div>';
+  }
+  
+  return html;
+}
+
+function getSubcategoriesCount(parentId) {
+  return allCategories.filter(function(cat) {
+    return cat.parentId === parentId;
+  }).length;
+}
+
+function toggleSubcategories(categoryId) {
+  var subDiv = document.getElementById('sub-' + categoryId);
+  var icon = document.getElementById('toggle-' + categoryId);
+  
+  if (subDiv.style.display === 'none') {
+    subDiv.style.display = 'block';
+    icon.classList.remove('fa-chevron-down');
+    icon.classList.add('fa-chevron-up');
+  } else {
+    subDiv.style.display = 'none';
+    icon.classList.remove('fa-chevron-up');
+    icon.classList.add('fa-chevron-down');
+  }
+}
+
+function switchSettingsTab(tab) {
+  console.log('Switching to tab:', tab);
+  
+  currentSettingsTab = tab;
+  
+  // Update button styles
+  document.getElementById('tabExpense').className = tab === 'expense' ? 'btn-primary' : 'btn-secondary';
+  document.getElementById('tabIncome').className = tab === 'income' ? 'btn-primary' : 'btn-secondary';
+  document.getElementById('tabBudget').className = tab === 'budget' ? 'btn-primary' : 'btn-secondary';
+  
+  // Load categories for selected tab
+  loadCategoriesForTab(tab);
+}
+
+function getCurrentUserId() {
+  return currentUser ? currentUser.id : 'USR001';
+}
+
+
+function saveSubcategory() {
+  var parentId = document.getElementById('subcategoryParentId').value;
+  var name = document.getElementById('subcategoryName').value.trim();
+  var sortOrder = parseInt(document.getElementById('subcategorySortOrder').value) || 999;
+  
+  if (!name) {
+    showToast('Vui lòng nhập tên danh mục con', 'error');
+    return;
+  }
+  
+  if (!parentId) {
+    showToast('Lỗi: Không tìm thấy danh mục cha', 'error');
+    return;
+  }
+  
+  showLoading();
+  closeModal();
+  
+  var data = {
+    type: currentSettingsTab,
+    parentId: parentId,
+    name: name,
+    icon: '',
+    color: '',
+    userId: getCurrentUserId(),
+    sortOrder: sortOrder
+  };
+  
+  console.log('Saving subcategory:', data);
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      hideLoading();
+      
+      if (response.success) {
+        console.log('✅ Subcategory saved successfully');
+        showToast('Thêm danh mục con thành công', 'success');
+        
+        // Clear cache
+        CategoryManager.clearCache(parentId);
+        
+        // Reload categories for current tab
+        loadCategoriesForTab(currentSettingsTab);
+        
+        // Refresh main categories cache
+        DataManager.refreshCategories(currentSettingsTab).then(function() {
+          console.log('Categories cache refreshed');
+        });
+        
+      } else {
+        showToast(response.message || 'Lỗi khi thêm danh mục con', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Error:', error);
+      showToast('Lỗi kết nối', 'error');
+    })
+    .handleRequest('saveCategory', data);
+}
+
+function openAddSubcategoryModal(parentId, parentName) {
+  var body = '<div class="form-group">' +
+    '<label>Danh mục cha</label>' +
+    '<input type="text" class="form-control" value="' + parentName + '" disabled>' +
+    '<input type="hidden" id="subcategoryParentId" value="' + parentId + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>Tên danh mục con <span style="color: red;">*</span></label>' +
+    '<input type="text" id="subcategoryName" class="form-control" placeholder="Nhập tên danh mục con">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>Thứ tự hiển thị</label>' +
+    '<input type="number" id="subcategorySortOrder" class="form-control" value="999" min="1">' +
+    '</div>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-primary" onclick="saveSubcategory()">Lưu</button>';
+  
+  openModal('Thêm danh mục con', body, footer);
+  
+  // Focus to name input
+  setTimeout(function() {
+    document.getElementById('subcategoryName').focus();
+  }, 100);
+}
+// ========================================
+// CATEGORY MODALS - ADD / EDIT / DELETE
+// ========================================
+
+/**
+ * Open modal to add new category
+ * @param {string} parentId - Parent category ID (null for main category)
+ */
+function openAddCategoryModal(parentId) {
+  editingCategoryId = null;
+  
+  var title = parentId ? 'Thêm danh mục con' : 'Thêm danh mục chính';
+  var parentName = '';
+  
+  if (parentId) {
+    var parent = allCategories.find(function(cat) {
+      return cat.id === parentId;
+    });
+    parentName = parent ? parent.name : '';
+  }
+  
+  var modalBody = '<form id="categoryForm" onsubmit="handleSaveCategory(event)">' +
+    
+    (parentId ? 
+      '<div class="form-group">' +
+      '<label>Danh mục cha</label>' +
+      '<input type="text" class="form-control" value="' + parentName + '" disabled>' +
+      '<input type="hidden" id="categoryParentId" value="' + parentId + '">' +
+      '</div>' : 
+      '<input type="hidden" id="categoryParentId" value="">') +
+    
+    '<div class="form-group">' +
+    '<label>Tên danh mục <span style="color: red;">*</span></label>' +
+    '<input type="text" id="categoryName" class="form-control" placeholder="Nhập tên danh mục" required autofocus>' +
+    '</div>' +
+    
+    // ===== SỬA PHẦN NÀY - THÊM EMOJI PICKER =====
+    (parentId ? '' : 
+      '<div class="form-group">' +
+      '<label>Icon (Emoji)</label>' +
+      '<div style="display: flex; gap: 10px; margin-bottom: 10px;">' +
+      '<input type="text" id="categoryIcon" class="form-control" placeholder="🍔" maxlength="2" style="flex: 1;">' +
+      '<button type="button" class="btn-secondary" onclick="toggleEmojiPicker()" style="padding: 8px 16px;">📝 Chọn</button>' +
+      '</div>' +
+      '<div id="emojiPicker" style="display: none; padding: 15px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; max-height: 200px; overflow-y: auto;">' +
+      renderEmojiPicker() +
+      '</div>' +
+      '</div>' +
+      
+      '<div class="form-group">' +
+      '<label>Màu sắc</label>' +
+      '<div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;">' +
+      renderColorPicker() +
+      '</div>' +
+      '<input type="hidden" id="categoryColor" value="#e94849">' +
+      '</div>') +
+    // ===== KẾT THÚC PHẦN SỬA =====
+    
+    '<div class="form-group">' +
+    '<label>Thứ tự hiển thị</label>' +
+    '<input type="number" id="categorySortOrder" class="form-control" value="999" min="1">' +
+    '</div>' +
+    
+    '</form>';
+  
+  var modalFooter = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-primary" onclick="document.getElementById(\'categoryForm\').requestSubmit()">Lưu</button>';
+  
+  openModal(title, modalBody, modalFooter);
+}
+
+/**
+ * Open modal to edit existing category
+ * @param {string} categoryId - Category ID to edit
+ */
+function openEditCategoryModal(categoryId) {
+  editingCategoryId = categoryId;
+  
+  var category = allCategories.find(function(cat) {
+    return cat.id === categoryId;
+  });
+  
+  if (!category) {
+    showToast('Không tìm thấy danh mục', 'error');
+    return;
+  }
+  
+  var title = 'Sửa danh mục: ' + category.name;
+  var isMainCategory = !category.parentId;
+  
+  var modalBody = '<form id="categoryForm" onsubmit="handleSaveCategory(event)">' +
+    
+    '<div class="form-group">' +
+    '<label>Tên danh mục <span style="color: red;">*</span></label>' +
+    '<input type="text" id="categoryName" class="form-control" value="' + category.name + '" required autofocus>' +
+    '</div>' +
+    
+    // ===== SỬA PHẦN NÀY - THÊM EMOJI PICKER =====
+    (isMainCategory ? 
+      '<div class="form-group">' +
+      '<label>Icon (Emoji)</label>' +
+      '<div style="display: flex; gap: 10px; margin-bottom: 10px;">' +
+      '<input type="text" id="categoryIcon" class="form-control" value="' + (category.icon || '') + '" maxlength="2" style="flex: 1;">' +
+      '<button type="button" class="btn-secondary" onclick="toggleEmojiPicker()" style="padding: 8px 16px;">📝 Chọn</button>' +
+      '</div>' +
+      '<div id="emojiPicker" style="display: none; padding: 15px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; max-height: 200px; overflow-y: auto;">' +
+      renderEmojiPicker() +
+      '</div>' +
+      '</div>' +
+      
+      '<div class="form-group">' +
+      '<label>Màu sắc</label>' +
+      '<div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;">' +
+      renderColorPicker(category.color) +
+      '</div>' +
+      '<input type="hidden" id="categoryColor" value="' + (category.color || '#e94849') + '">' +
+      '</div>' : '') +
+    // ===== KẾT THÚC PHẦN SỬA =====
+    
+    '<div class="form-group">' +
+    '<label>Thứ tự hiển thị</label>' +
+    '<input type="number" id="categorySortOrder" class="form-control" value="' + (category.sortOrder || 999) + '" min="1">' +
+    '</div>' +
+    
+    '</form>';
+  
+  var modalFooter = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-primary" onclick="document.getElementById(\'categoryForm\').requestSubmit()">Cập nhật</button>';
+  
+  openModal(title, modalBody, modalFooter);
+}
+
+/**
+ * Render color picker
+ */
+function renderColorPicker(selectedColor) {
+  var colors = [
+    '#e94849', // Red
+    '#f59e0b', // Orange
+    '#f59e0b', // Yellow
+    '#24c560', // Green
+    '#10b981', // Teal
+    '#3782f4', // Blue
+    '#8b5cf6', // Purple
+    '#ec4899', // Pink
+    '#6b7280'  // Gray
+  ];
+  
+  var html = '';
+  
+  for (var i = 0; i < colors.length; i++) {
+    var color = colors[i];
+    var isSelected = selectedColor === color || (!selectedColor && i === 0);
+    
+    html += '<div class="color-option' + (isSelected ? ' selected' : '') + '" ' +
+      'style="background: ' + color + ';" ' +
+      'onclick="selectColor(\'' + color + '\')" ' +
+      'data-color="' + color + '">' +
+      (isSelected ? '<i class="fas fa-check"></i>' : '') +
+      '</div>';
+  }
+  
+  return html;
+}
+
+/**
+ * Render emoji picker
+ */
+function renderEmojiPicker() {
+  var emojiGroups = {
+    'Phổ biến': ['🍔', '🚗', '🛒', '📚', '⚕️', '🎮', '💰', '📈', '🎁', '📦', '🏠', '⚡', '💡', '🔧'],
+    'Ăn uống': ['🍕', '🍜', '☕', '🍺', '🥗', '🍣', '🥘', '🍰', '🍎', '🥐', '🍱', '🥤'],
+    'Di chuyển': ['🚙', '🚕', '🚌', '✈️', '🚂', '🚴', '🛵', '⛽', '🚦'],
+    'Mua sắm': ['👕', '👗', '👔', '👠', '💄', '📱', '💻', '📷', '🎧', '⌚'],
+    'Học tập': ['📖', '✏️', '📝', '🎓', '🏫', '💼', '📊', '🖊️'],
+    'Y tế': ['💊', '🏥', '🩺', '💉', '🧘', '🏃', '⚕️'],
+    'Giải trí': ['🎬', '🎵', '🎸', '🎮', '🎯', '🎪', '🎨', '📺', '🎭'],
+    'Tài chính': ['💵', '💳', '💎', '🏦', '📈', '📉', '💸', '🪙'],
+    'Khác': ['⭐', '❤️', '🎉', '🔔', '📌', '🏆', '🎯', '✅', '❌', '⚠️']
+  };
+  
+  var html = '';
+  
+  for (var group in emojiGroups) {
+    html += '<div style="margin-bottom: 15px;">' +
+      '<div style="font-size: 11px; font-weight: 600; color: #6b7280; margin-bottom: 8px; text-transform: uppercase;">' + group + '</div>' +
+      '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: 5px;">';
+    
+    var emojis = emojiGroups[group];
+    for (var i = 0; i < emojis.length; i++) {
+      html += '<button type="button" class="emoji-btn" onclick="selectEmoji(\'' + emojis[i] + '\')">' + 
+        emojis[i] + 
+        '</button>';
+    }
+    
+    html += '</div></div>';
+  }
+  
+  return html;
+}
+
+/**
+ * Toggle emoji picker visibility
+ */
+function toggleEmojiPicker() {
+  var picker = document.getElementById('emojiPicker');
+  if (picker) {
+    picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+  }
+}
+
+/**
+ * Select emoji from picker
+ */
+function selectEmoji(emoji) {
+  var input = document.getElementById('categoryIcon');
+  if (input) {
+    input.value = emoji;
+    toggleEmojiPicker(); // Close picker
+  }
+}
+
+/**
+ * Select color
+ */
+function selectColor(color) {
+  // Remove selected class from all
+  var options = document.querySelectorAll('.color-option');
+  options.forEach(function(opt) {
+    opt.classList.remove('selected');
+    opt.innerHTML = '';
+  });
+  
+  // Add selected class to clicked
+  var selected = document.querySelector('.color-option[data-color="' + color + '"]');
+  if (selected) {
+    selected.classList.add('selected');
+    selected.innerHTML = '<i class="fas fa-check"></i>';
+  }
+  
+  // Update hidden input
+  document.getElementById('categoryColor').value = color;
+}
+
+/**
+ * Handle save category (add or edit)
+ */
+function handleSaveCategory(event) {
+  event.preventDefault();
+  
+  var name = document.getElementById('categoryName').value.trim();
+  var icon = document.getElementById('categoryIcon') ? document.getElementById('categoryIcon').value.trim() : '';
+  var color = document.getElementById('categoryColor') ? document.getElementById('categoryColor').value : '';
+  var sortOrder = parseInt(document.getElementById('categorySortOrder').value) || 999;
+  var parentId = document.getElementById('categoryParentId') ? document.getElementById('categoryParentId').value : '';
+  
+  if (!name) {
+    showToast('Vui lòng nhập tên danh mục', 'error');
+    return;
+  }
+  
+  var data = {
+    type: currentSettingsTab,
+    name: name,
+    icon: icon,
+    color: color,
+    sortOrder: sortOrder,
+    parentId: parentId || null,
+    userId: getCurrentUserId()
+  };
+  
+  closeModal();
+  
+  if (editingCategoryId) {
+    // Update existing
+    updateCategoryBackend(editingCategoryId, data);
+  } else {
+    // Add new
+    saveCategoryBackend(data);
+  }
+}
+
+/**
+ * Save new category to backend
+ */
+function saveCategoryBackend(data) {
+  showLoading('Đang lưu danh mục...');
+  
+  var parentIdToExpand = data.parentId; // Lưu parentId để expand sau
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      
+      if (result.success) {
+        showToast('Thêm danh mục thành công', 'success');
+        
+        // Reload và tự động mở danh mục cha nếu thêm danh mục con
+        loadAllCategoriesAndExpand(parentIdToExpand);
+      } else {
+        showToast(result.message || 'Lỗi thêm danh mục', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .saveCategory(data);
+}
+
+/**
+ * Update existing category
+ */
+function updateCategoryBackend(categoryId, data) {
+  showLoading('Đang cập nhật...');
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      
+      if (result.success) {
+        showToast('Cập nhật danh mục thành công', 'success');
+        loadAllCategories(); // Reload
+      } else {
+        showToast(result.message || 'Lỗi cập nhật', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .updateCategory(categoryId, data);
+}
+
+/**
+ * Confirm delete category
+ */
+function confirmDeleteCategory(categoryId) {
+  var category = allCategories.find(function(cat) {
+    return cat.id === categoryId;
+  });
+  
+  if (!category) {
+    showToast('Không tìm thấy danh mục', 'error');
+    return;
+  }
+  
+  var message = 'Bạn có chắc muốn xóa danh mục "<strong>' + category.name + '</strong>"?';
+  
+  if (category.hasChildren) {
+    message += '<br><br><span style="color: #e94849;">⚠️ Danh mục này có ' + getSubcategoriesCount(category.id) + ' danh mục con. Tất cả danh mục con cũng sẽ bị xóa.</span>';
+  }
+  
+  var modalBody = '<div style="padding: 20px; text-align: center;">' +
+    '<i class="fas fa-exclamation-triangle" style="font-size: 48px; color: #f59e0b; margin-bottom: 15px;"></i>' +
+    '<p style="font-size: 16px; color: #1f2937;">' + message + '</p>' +
+    '</div>';
+  
+  var modalFooter = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-danger" onclick="deleteCategoryBackend(\'' + categoryId + '\')">Xóa</button>';
+  
+  openModal('Xác nhận xóa', modalBody, modalFooter);
+}
+
+/**
+ * Delete category from backend
+ */
+function deleteCategoryBackend(categoryId) {
+  closeModal();
+  showLoading('Đang xóa...');
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      
+      if (result.success) {
+        showToast('Xóa danh mục thành công', 'success');
+        loadAllCategories(); // Reload
+      } else {
+        showToast(result.message || 'Lỗi xóa danh mục', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .deleteCategory(categoryId);
+}
+
+// Test Settings Page
+(async function testSettingsPage() {
+  console.log('=== Testing Settings Page ===');
+  
+  if (!DataManager.isInitialized()) {
+    await DataManager.initialize();
+    syncLegacyVariables();
+  }
+  
+  showSettingsPage();
+  
+  setTimeout(() => {
+    var tabs = document.querySelectorAll('.settings-tab');
+    console.assert(tabs.length > 0, 'Should have setting tabs');
+    
+    console.log('✅ Settings page tests passed');
+  }, 500);
+})();
+
+</script>
