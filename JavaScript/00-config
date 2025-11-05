@@ -1,0 +1,76 @@
+<script>
+// ========== GLOBAL VARIABLES ==========
+var currentUser = null;
+var allIncomeData = [];
+var allExpenseData = [];
+var allBudgetData = [];
+var allLoanData = [];
+var allInvestmentData = [];
+var allThirdPartyData = [];
+var allAccountsData = [];
+var allSettingsData = [];
+var currentPage = 'dashboard';
+// Category cache
+var mainExpenseCategories = [];
+var mainIncomeCategories = [];
+var mainBudgetCategories = [];
+var categoryCache = {}; // { categoryId: {id, name, icon, color, parentId} }
+
+// ========== INCOME PAGE WITH FILTERS & PAGINATION ==========
+var incomeCurrentPage = 1;
+var incomeItemsPerPage = 10;
+var incomeFilteredData = [];
+var incomeFilters = {
+  fromDate: '',
+  toDate: '',
+  category: '',
+  accountId: ''
+};
+
+// Budget page state
+var budgetCurrentPage = 1;
+var budgetItemsPerPage = 10;
+var budgetFilteredData = [];
+var budgetFilters = {
+  monthFrom: '',
+  monthTo: '',
+  category: ''
+};
+
+// ===== THÊM DÒNG NÀY NGAY BÊN DƯỚI =====
+// Budget subcategories mapping
+var budgetSubcategories = {
+  'food': ['Ăn sáng', 'Ăn trưa', 'Ăn tối', 'Ăn vặt', 'Nhà hàng', 'Khác'],
+  'transport': ['Xăng xe', 'Taxi/Grab', 'Xe bus', 'Bảo dưỡng xe', 'Vé máy bay', 'Khác'],
+  'shopping': ['Quần áo', 'Mỹ phẩm', 'Điện tử', 'Nội thất', 'Đồ dùng cá nhân', 'Khác'],
+  'education': ['Học phí', 'Sách vở', 'Khóa học online', 'Đào tạo', 'Học thêm', 'Khác'],
+  'health': ['Khám bệnh', 'Thuốc men', 'Bảo hiểm y tế', 'Gym/Yoga', 'Vitamin', 'Khác'],
+  'entertainment': ['Phim ảnh', 'Du lịch', 'Cafe', 'Game/Sách', 'Sở thích', 'Khác'],
+  'other': ['Quà tặng', 'Từ thiện', 'Chi phí khác']
+};
+
+// Loan page state
+var loanCurrentPage = 1;
+var loanItemsPerPage = 10;
+var loanFilteredData = [];
+var loanFilters = {
+  fromDate: '',
+  toDate: '',
+  loanName: '',
+  status: '',
+  dueFrom: '',
+  dueTo: '',
+  remainingMin: '',
+  remainingMax: ''
+};
+
+// ========== SETTINGS PAGE STATE ==========
+var allCategories = []; // Cache all categories
+var currentSettingsTab = 'expense'; // Current tab: expense, income, budget, etc.
+var editingCategoryId = null; // ID of category being edited
+
+// Mở Console → chạy:
+console.log(typeof currentUser); // should be 'undefined' initially
+console.log(incomeItemsPerPage); // should be 10
+
+C
