@@ -1,1 +1,79 @@
+<script>
+// ========== AUTHENTICATION ==========
+function togglePassword() {
+  var input = document.getElementById('loginPassword');
+  var icon = document.querySelector('.toggle-password i');
+  
+  if (!input || !icon) return;
+  
+  if (input.type === 'password') {
+    input.type = 'text';
+    icon.className = 'fas fa-eye-slash';
+  } else {
+    input.type = 'password';
+    icon.className = 'fas fa-eye';
+  }
+}
 
+function handleLogin() {
+  var username = document.getElementById('loginUsername').value;
+  var password = document.getElementById('loginPassword').value;
+  
+  if (!username || !password) {
+    showToast('Vui lòng nhập đầy đủ thông tin', 'error');
+    return;
+  }
+  
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      hideLoading();
+      
+      if (!response || typeof response !== 'object') {
+        showToast('Lỗi: Phản hồi không đúng định dạng', 'error');
+        return;
+      }
+      
+      if (response.success) {
+        currentUser = response.data;
+        console.log('Logged in user:', currentUser);
+        document.getElementById('loginScreen').style.display = 'none';
+        document.getElementById('mainApp').style.display = 'flex';
+        
+        document.getElementById('userName').textContent = currentUser.fullName;
+        document.getElementById('userRole').textContent = currentUser.role === 'Admin' ? 'Quản trị viên' : 'Người dùng';
+        
+        loadAllData();
+      } else {
+        showToast(response.message || 'Đăng nhập thất bại', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi kết nối: ' + (error.message || 'Không thể kết nối đến server'), 'error');
+    })
+    .handleRequest('login', { username: username, password: password });
+}
+
+function handleLogout() {
+  if (!confirm('Bạn có chắc muốn đăng xuất?')) return;
+  
+  google.script.run
+    .withSuccessHandler(function() {
+      location.reload();
+    })
+    .withFailureHandler(function() {
+      location.reload();
+    })
+    .handleRequest('logout', {});
+}
+
+// Test Auth (Manual)
+console.log('=== Testing Auth (Manual) ===');
+console.log('1. Nhập username: admin');
+console.log('2. Nhập password: admin123');
+console.log('3. Click Đăng nhập');
+console.log('4. Kiểm tra: currentUser nên có giá trị');
+console.log('5. Kiểm tra: loginScreen nên ẩn, mainApp nên hiện');
+</script>
