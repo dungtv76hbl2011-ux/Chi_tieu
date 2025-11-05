@@ -1,0 +1,268 @@
+<script>
+// ========================================
+// ERROR HANDLER - CENTRALIZED ERROR RECOVERY
+// ========================================
+
+const ErrorHandler = (function() {
+  'use strict';
+  
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 1000; // 1 second
+  
+  const errorLog = [];
+  const retryQueue = [];
+  
+  // ========== API CALL WITH RETRY ==========
+  
+  async function callWithRetry(action, params, retries = MAX_RETRIES) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`🔄 Attempt ${attempt}/${retries}: ${action}`);
+        
+        const result = await callAPI(action, params);
+        
+        if (result && result.success) {
+          console.log(`✅ Success: ${action}`);
+          return result;
+        } else {
+          throw new Error(result?.message || 'Unknown error');
+        }
+        
+      } catch (error) {
+        console.error(`❌ Attempt ${attempt} failed:`, error);
+        
+        logError(action, params, error, attempt);
+        
+        if (attempt === retries) {
+          // Final attempt failed
+          handleFinalFailure(action, params, error);
+          throw error;
+        }
+        
+        // Wait before retry
+        await sleep(RETRY_DELAY * attempt);
+      }
+    }
+  }
+  
+  function callAPI(action, params) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Request timeout'));
+      }, 30000); // 30 seconds
+      
+      google.script.run
+        .withSuccessHandler(response => {
+          clearTimeout(timeout);
+          resolve(response);
+        })
+        .withFailureHandler(error => {
+          clearTimeout(timeout);
+          reject(error);
+        })
+        .handleRequest(action, params);
+    });
+  }
+  
+  // ========== ERROR LOGGING ==========
+  
+  function logError(action, params, error, attempt) {
+    const errorEntry = {
+      timestamp: new Date().toISOString(),
+      action,
+      params,
+      error: error.message,
+      attempt,
+      stack: error.stack
+    };
+    
+    errorLog.push(errorEntry);
+    
+    // Keep only last 100 errors
+    if (errorLog.length > 100) {
+      errorLog.shift();
+    }
+    
+    console.error('📝 Error logged:', errorEntry);
+  }
+  
+  function handleFinalFailure(action, params, error) {
+    // Add to retry queue for manual retry
+    retryQueue.push({
+      action,
+      params,
+      error: error.message,
+      timestamp: Date.now()
+    });
+    
+    // Show user-friendly error
+    showToast(
+      `Lỗi: ${getFriendlyErrorMessage(action, error)}`,
+      'error'
+    );
+    
+    // Offer manual retry
+    if (retryQueue.length > 0) {
+      showRetryNotification();
+    }
+  }
+  
+  // ========== USER-FRIENDLY MESSAGES ==========
+  
+  function getFriendlyErrorMessage(action, error) {
+    const errorMessages = {
+      'createRecord': 'Không thể tạo bản ghi. Vui lòng thử lại.',
+      'updateRecord': 'Không thể cập nhật. Vui lòng thử lại.',
+      'deleteRecord': 'Không thể xóa. Vui lòng thử lại.',
+      'getAllData': 'Không thể tải dữ liệu. Vui lòng làm mới trang.',
+      'updateAccountBalance': 'Không thể cập nhật số dư tài khoản.',
+      'calculateBudgetSpent': 'Không thể tính toán ngân sách.',
+      'login': 'Đăng nhập thất bại. Vui lòng kiểm tra tài khoản.'
+    };
+    
+    if (error.message && error.message.includes('timeout')) {
+      return 'Kết nối bị gián đoạn. Vui lòng kiểm tra mạng.';
+    }
+    
+    if (error.message && error.message.includes('Session')) {
+      return 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+    }
+    
+    return errorMessages[action] || 'Đã xảy ra lỗi. Vui lòng thử lại.';
+  }
+  
+  // ========== RETRY NOTIFICATION ==========
+  
+  function showRetryNotification() {
+    const notification = document.createElement('div');
+    notification.id = 'retryNotification';
+    notification.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #fff;
+      border: 2px solid #f59e0b;
+      border-radius: 8px;
+      padding: 15px 20px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 10001;
+      max-width: 300px;
+    `;
+    
+    notification.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <i class="fas fa-exclamation-triangle" style="color: #f59e0b; font-size: 20px;"></i>
+        <strong>Có ${retryQueue.length} thao tác thất bại</strong>
+      </div>
+      <button onclick="ErrorHandler.retryAll()" class="btn-warning" style="width: 100%; padding: 8px;">
+        <i class="fas fa-redo"></i> Thử lại tất cả
+      </button>
+      <button onclick="ErrorHandler.clearQueue()" class="btn-secondary" style="width: 100%; padding: 8px; margin-top: 5px;">
+        <i class="fas fa-times"></i> Bỏ qua
+      </button>
+    `;
+    
+    // Remove old notification if exists
+    const oldNotification = document.getElementById('retryNotification');
+    if (oldNotification) {
+      oldNotification.remove();
+    }
+    
+    document.body.appendChild(notification);
+  }
+  
+  // ========== RETRY QUEUE ==========
+  
+  async function retryAll() {
+    const queue = [...retryQueue];
+    retryQueue.length = 0; // Clear queue
+    
+    const notification = document.getElementById('retryNotification');
+    if (notification) {
+      notification.remove();
+    }
+    
+    showLoading(`Đang thử lại ${queue.length} thao tác...`);
+    
+    let successCount = 0;
+    let failedCount = 0;
+    
+    for (const item of queue) {
+      try {
+        await callWithRetry(item.action, item.params, 2);
+        successCount++;
+      } catch (error) {
+        failedCount++;
+        retryQueue.push(item); // Re-add failed items
+      }
+    }
+    
+    hideLoading();
+    
+    if (successCount > 0) {
+      showToast(`Thành công: ${successCount} thao tác`, 'success');
+    }
+    
+    if (failedCount > 0) {
+      showToast(`Thất bại: ${failedCount} thao tác`, 'error');
+      showRetryNotification();
+    }
+  }
+  
+  function clearQueue() {
+    retryQueue.length = 0;
+    
+    const notification = document.getElementById('retryNotification');
+    if (notification) {
+      notification.remove();
+    }
+    
+    showToast('Đã xóa hàng đợi', 'info');
+  }
+  
+  // ========== HELPERS ==========
+  
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+  
+  function getErrorLog() {
+    return [...errorLog];
+  }
+  
+  function getRetryQueue() {
+    return [...retryQueue];
+  }
+  
+  // ========== PUBLIC API ==========
+  
+  return {
+    callWithRetry,
+    retryAll,
+    clearQueue,
+    getErrorLog,
+    getRetryQueue
+  };
+})();
+
+// Test ErrorHandler
+(async function testErrorHandler() {
+  console.log('=== Testing ErrorHandler ===');
+  
+  // Test 1: Successful call
+  try {
+    var result = await ErrorHandler.callWithRetry('getSession', {});
+    console.log('✓ API call successful:', result.success);
+  } catch (error) {
+    console.error('✗ API call failed:', error);
+  }
+  
+  // Test 2: Error log
+  var errorLog = ErrorHandler.getErrorLog();
+  console.assert(Array.isArray(errorLog), 'getErrorLog should return array');
+  console.log('✓ Error log entries:', errorLog.length);
+  
+  console.log('✅ ErrorHandler tests passed');
+})();
+
+</script>
