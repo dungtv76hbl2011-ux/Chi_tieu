@@ -1,1 +1,341 @@
+<script>
 
+// ========================================
+// VALIDATOR - CENTRALIZED INPUT VALIDATION
+// ========================================
+
+const Validator = (function() {
+  'use strict';
+  
+  // ========== VALIDATION RULES ==========
+  
+  const rules = {
+    required: (value, fieldName) => {
+      if (!value || (typeof value === 'string' && value.trim() === '')) {
+        return `${fieldName} không được để trống`;
+      }
+      return null;
+    },
+    
+    number: (value, fieldName) => {
+      if (isNaN(value) || value === '') {
+        return `${fieldName} phải là số`;
+      }
+      return null;
+    },
+    
+    positive: (value, fieldName) => {
+      if (parseFloat(value) <= 0) {
+        return `${fieldName} phải lớn hơn 0`;
+      }
+      return null;
+    },
+    
+    date: (value, fieldName) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return `${fieldName} không đúng định dạng (YYYY-MM-DD)`;
+      }
+      const date = new Date(value);
+      if (isNaN(date.getTime())) {
+        return `${fieldName} không hợp lệ`;
+      }
+      return null;
+    },
+    
+    month: (value, fieldName) => {
+      if (!/^\d{4}-\d{2}$/.test(value)) {
+        return `${fieldName} không đúng định dạng (YYYY-MM)`;
+      }
+      return null;
+    },
+    
+    email: (value, fieldName) => {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(value)) {
+        return `${fieldName} không đúng định dạng`;
+      }
+      return null;
+    },
+    
+    minLength: (value, fieldName, min) => {
+      if (value.length < min) {
+        return `${fieldName} phải có ít nhất ${min} ký tự`;
+      }
+      return null;
+    },
+    
+    maxLength: (value, fieldName, max) => {
+      if (value.length > max) {
+        return `${fieldName} không được vượt quá ${max} ký tự`;
+      }
+      return null;
+    },
+    
+    accountBalance: (amount, accountId) => {
+      const accounts = DataManager.getAccounts();
+      const account = accounts.find(a => a.AccountID === accountId);
+      
+      if (!account) {
+        return 'Không tìm thấy tài khoản';
+      }
+      
+      const currentBalance = parseCurrency(account['Số dư hiện tại']);
+      if (amount > currentBalance) {
+        return `Số dư không đủ (Còn: ${formatCurrency(currentBalance)} đ)`;
+      }
+      
+      return null;
+    },
+    
+    uniqueId: (id, sheetName, excludeId = null) => {
+      const key = DataManager.getKeyFromSheetName(sheetName);
+      if (!key) return null;
+      
+      const data = DataManager[`get${key.charAt(0).toUpperCase() + key.slice(1)}`]();
+      const exists = data.some(item => {
+        const itemId = item.ID || item.AccountID;
+        return itemId === id && itemId !== excludeId;
+      });
+      
+      if (exists) {
+        return 'ID đã tồn tại trong hệ thống';
+      }
+      
+      return null;
+    }
+  };
+  
+  // ========== VALIDATION SCHEMAS ==========
+  
+  const schemas = {
+    income: {
+      'Ngày': ['required', 'date'],
+      'Số tiền': ['required', 'number', 'positive'],
+      'Danh mục': ['required'],
+      'Tài khoản': ['required']
+    },
+    
+    expense: {
+      'Ngày': ['required', 'date'],
+      'Số tiền': ['required', 'number', 'positive'],
+      'Danh mục': ['required'],
+      'Tài khoản': ['required']
+    },
+    
+    budget: {
+      'Tháng': ['required', 'month'],
+      'Kế hoạch': ['required', 'number', 'positive'],
+      'Danh mục': ['required']
+    },
+    
+    account: {
+      'Tên tài khoản': ['required', ['minLength', 2], ['maxLength', 100]],
+      'Số dư đầu kỳ': ['required', 'number']
+    },
+    
+    login: {
+      'Tên đăng nhập': ['required', ['minLength', 3]],
+      'Mật khẩu': ['required', ['minLength', 6]]
+    }
+  };
+  
+  // ========== VALIDATE FUNCTION ==========
+  
+  function validate(data, schemaName) {
+    const schema = schemas[schemaName];
+    if (!schema) {
+      console.error('Unknown schema:', schemaName);
+      return { valid: true, errors: {} };
+    }
+    
+    const errors = {};
+    let valid = true;
+    
+    for (const [field, validations] of Object.entries(schema)) {
+      const value = data[field];
+      
+      for (const validation of validations) {
+        let ruleName, ruleParams;
+        
+        if (Array.isArray(validation)) {
+          [ruleName, ...ruleParams] = validation;
+        } else {
+          ruleName = validation;
+          ruleParams = [];
+        }
+        
+        const rule = rules[ruleName];
+        if (!rule) {
+          console.error('Unknown rule:', ruleName);
+          continue;
+        }
+        
+        const error = rule(value, field, ...ruleParams);
+        
+        if (error) {
+          errors[field] = error;
+          valid = false;
+          break; // Stop at first error for this field
+        }
+      }
+    }
+    
+    return { valid, errors };
+  }
+  // ========== SHOW ERRORS IN UI ==========
+  
+  function showErrors(errors) {
+    // Remove old error messages
+    document.querySelectorAll('.field-error').forEach(el => el.remove());
+    
+    for (const [field, message] of Object.entries(errors)) {
+      // Find input by label text
+      const labels = document.querySelectorAll('.form-group label');
+      let inputElement = null;
+      
+      for (const label of labels) {
+        if (label.textContent.includes(field)) {
+          const formGroup = label.closest('.form-group');
+          inputElement = formGroup.querySelector('input, select, textarea');
+          break;
+        }
+      }
+      
+      if (inputElement) {
+        // Add error styling
+        inputElement.style.borderColor = '#e94849';
+        
+        // Add error message
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'field-error';
+        errorDiv.style.cssText = 'color: #e94849; font-size: 12px; margin-top: 5px;';
+        errorDiv.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${message}`;
+        
+        inputElement.parentElement.appendChild(errorDiv);
+      }
+    }
+    
+    // Show summary toast
+    const errorCount = Object.keys(errors).length;
+    showToast(`Vui lòng kiểm tra ${errorCount} trường bị lỗi`, 'error');
+  }
+  
+  // ========== CLEAR ERRORS ==========
+  
+  function clearErrors() {
+    document.querySelectorAll('.field-error').forEach(el => el.remove());
+    document.querySelectorAll('input, select, textarea').forEach(el => {
+      el.style.borderColor = '';
+    });
+  }
+  
+  // ========== REAL-TIME VALIDATION ==========
+  
+  function enableRealTimeValidation(formElement, schemaName) {
+    const inputs = formElement.querySelectorAll('input, select, textarea');
+    
+    inputs.forEach(input => {
+      input.addEventListener('blur', function() {
+        const label = this.closest('.form-group')?.querySelector('label')?.textContent.trim();
+        if (!label) return;
+        
+        const schema = schemas[schemaName];
+        if (!schema || !schema[label]) return;
+        
+        // Validate this field only
+        const validations = schema[label];
+        let error = null;
+        
+        for (const validation of validations) {
+          let ruleName, ruleParams;
+          
+          if (Array.isArray(validation)) {
+            [ruleName, ...ruleParams] = validation;
+          } else {
+            ruleName = validation;
+            ruleParams = [];
+          }
+          
+          const rule = rules[ruleName];
+          if (!rule) continue;
+          
+          error = rule(this.value, label, ...ruleParams);
+          if (error) break;
+        }
+        
+        // Remove old error for this field
+        const oldError = this.parentElement.querySelector('.field-error');
+        if (oldError) oldError.remove();
+        
+        if (error) {
+          // Show error
+          this.style.borderColor = '#e94849';
+          
+          const errorDiv = document.createElement('div');
+          errorDiv.className = 'field-error';
+          errorDiv.style.cssText = 'color: #e94849; font-size: 12px; margin-top: 5px;';
+          errorDiv.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${error}`;
+          
+          this.parentElement.appendChild(errorDiv);
+        } else {
+          // Clear error
+          this.style.borderColor = '';
+        }
+      });
+    });
+  }
+  
+  // ========== PUBLIC API ==========
+  
+  return {
+    validate,
+    showErrors,
+    clearErrors,
+    enableRealTimeValidation,
+    rules // Expose for custom validations
+  };
+})();
+
+// Test Validator
+(function testValidator() {
+  console.log('=== Testing Validator ===');
+  
+  // Test 1: Valid income data
+  var validIncome = {
+    'Ngày': '2025-10-20',
+    'Số tiền': '1000000',
+    'Danh mục': 'salary',
+    'Tài khoản': 'ACC001'
+  };
+  var result1 = Validator.validate(validIncome, 'income');
+  console.assert(result1.valid === true, 'Valid income should pass');
+  console.log('✓ Valid income passed');
+  
+  // Test 2: Invalid income (missing date)
+  var invalidIncome = {
+    'Ngày': '',
+    'Số tiền': '1000000',
+    'Danh mục': 'salary',
+    'Tài khoản': 'ACC001'
+  };
+  var result2 = Validator.validate(invalidIncome, 'income');
+  console.assert(result2.valid === false, 'Invalid income should fail');
+  console.assert(result2.errors['Ngày'], 'Should have error for Ngày');
+  console.log('✓ Invalid income caught');
+  
+  // Test 3: Invalid number
+  var invalidNumber = {
+    'Ngày': '2025-10-20',
+    'Số tiền': 'abc',
+    'Danh mục': 'salary',
+    'Tài khoản': 'ACC001'
+  };
+  var result3 = Validator.validate(invalidNumber, 'income');
+  console.assert(result3.valid === false, 'Invalid number should fail');
+  console.log('✓ Invalid number caught');
+  
+  console.log('✅ Validator tests passed');
+})();
+
+
+  </script>
