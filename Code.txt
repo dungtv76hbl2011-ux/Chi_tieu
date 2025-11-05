@@ -328,12 +328,12 @@ function createRecord(sheetName, data, userId) {
     sheet.appendRow(newRow);
     addAuditLog(userId, 'create', sheetName, data.ID || data.id, data);
     
-    // ===== THÊM DÒNG NÀY =====
-    // Auto-update budget if this is an expense
+    // ===== THÊM ĐOẠN NÀY NẾU CHƯA CÓ =====
     if (sheetName === CONFIG.SHEET_NAMES.EXPENSE && data['Ngày']) {
+      Logger.log('Triggering budget update for expense date: ' + data['Ngày']);
       triggerBudgetUpdate(data['Ngày']);
     }
-    // ===== KẾT THÚC PHẦN THÊM =====
+    // ===== KẾT THÚC =====
     
     return { success: true, message: 'Tạo thành công', data: data };
   } catch (error) {
@@ -363,12 +363,12 @@ function updateRecord(sheetName, id, data, userId) {
         
         addAuditLog(userId, 'update', sheetName, id, data);
         
-        // ===== THÊM DÒNG NÀY =====
-        // Auto-update budget if this is an expense
+        // ===== THÊM ĐOẠN NÀY NẾU CHƯA CÓ =====
         if (sheetName === CONFIG.SHEET_NAMES.EXPENSE && data['Ngày']) {
+          Logger.log('Triggering budget update after expense edit');
           triggerBudgetUpdate(data['Ngày']);
         }
-        // ===== KẾT THÚC PHẦN THÊM =====
+        // ===== KẾT THÚC =====
         
         return { success: true, message: 'Cập nhật thành công' };
       }
@@ -392,7 +392,7 @@ function deleteRecord(sheetName, id, userId) {
     const headers = allData[0];
     const idIndex = headers.indexOf('ID') >= 0 ? headers.indexOf('ID') : headers.indexOf('AccountID');
     
-    // ===== THÊM DÒNG NÀY =====
+    // ===== LƯU LẠI NGÀY TRƯỚC KHI XÓA =====
     var expenseDate = null;
     if (sheetName === CONFIG.SHEET_NAMES.EXPENSE) {
       var dateIndex = headers.indexOf('Ngày');
@@ -403,19 +403,19 @@ function deleteRecord(sheetName, id, userId) {
         }
       }
     }
-    // ===== KẾT THÚC PHẦN THÊM =====
+    // ===== KẾT THÚC =====
     
     for (let i = 1; i < allData.length; i++) {
       if (allData[i][idIndex] === id) {
         sheet.deleteRow(i + 1);
         addAuditLog(userId, 'delete', sheetName, id, {});
         
-        // ===== THÊM DÒNG NÀY =====
-        // Auto-update budget if this was an expense
+        // ===== THÊM ĐOẠN NÀY NẾU CHƯA CÓ =====
         if (sheetName === CONFIG.SHEET_NAMES.EXPENSE && expenseDate) {
+          Logger.log('Triggering budget update after expense delete');
           triggerBudgetUpdate(expenseDate);
         }
-        // ===== KẾT THÚC PHẦN THÊM =====
+        // ===== KẾT THÚC =====
         
         return { success: true, message: 'Xóa thành công' };
       }
@@ -988,7 +988,8 @@ function quickFixPassword() {
  */
 function calculateBudgetSpent(budgetId, month) {
   try {
-    console.log('calculateBudgetSpent called - BudgetID: ' + budgetId + ', Month: ' + month);
+    console.log('=== calculateBudgetSpent START ===');
+    console.log('BudgetID:', budgetId, 'Month:', month);
     
     var budgetSheet = getSheet(CONFIG.SHEET_NAMES.BUDGET);
     var expenseSheet = getSheet(CONFIG.SHEET_NAMES.EXPENSE);
@@ -1001,7 +1002,7 @@ function calculateBudgetSpent(budgetId, month) {
     var budgetData = budgetSheet.getDataRange().getValues();
     var budgetRow = -1;
     var budgetCategoryId = '';
-    var budgetSubcategoryName = ''; // Thay đổi từ ID sang Name
+    var budgetSubcategoryName = '';
     
     for (var i = 1; i < budgetData.length; i++) {
       if (budgetData[i][0] === budgetId) {
@@ -1014,10 +1015,10 @@ function calculateBudgetSpent(budgetId, month) {
           
           if (catJson && catJson[0]) {
             budgetCategoryId = catJson[0].id || '';
-            budgetSubcategoryName = catJson[0].subcategory || ''; // Lưu tên subcategory
+            budgetSubcategoryName = catJson[0].subcategory || '';
           }
         } catch(e) {
-          console.log('Error parsing budget category: ' + e.toString());
+          console.log('Error parsing budget category:', e.toString());
         }
         break;
       }
@@ -1027,16 +1028,18 @@ function calculateBudgetSpent(budgetId, month) {
       return { success: false, message: 'Không tìm thấy ngân sách' };
     }
     
-    console.log('Budget found - CategoryID: ' + budgetCategoryId + ', Subcategory: ' + budgetSubcategoryName);
+    console.log('Budget found - CategoryID:', budgetCategoryId, 'Subcategory:', budgetSubcategoryName);
     
     // Calculate total spent from Expense sheet
     var expenseData = expenseSheet.getDataRange().getValues();
     var totalSpent = 0;
     var matchedCount = 0;
     
+    console.log('Checking', expenseData.length - 1, 'expenses');
+    
     for (var i = 1; i < expenseData.length; i++) {
-      var expenseDate = expenseData[i][1]; // Cột Ngày
-      var expenseAmount = parseFloat(expenseData[i][3]) || 0; // Cột Số tiền
+      var expenseDate = expenseData[i][1];
+      var expenseAmount = parseFloat(expenseData[i][3]) || 0;
       
       // Check month
       var expenseMonth = '';
@@ -1044,15 +1047,7 @@ function calculateBudgetSpent(budgetId, month) {
         expenseMonth = expenseDate.getFullYear() + '-' + 
           String(expenseDate.getMonth() + 1).padStart(2, '0');
       } else if (typeof expenseDate === 'string') {
-        // Handle string dates
-        if (expenseDate.indexOf('/') > -1) {
-          // Format: DD/MM/YYYY
-          var parts = expenseDate.split('/');
-          if (parts.length === 3) {
-            expenseMonth = parts[2] + '-' + parts[1].padStart(2, '0');
-          }
-        } else if (expenseDate.indexOf('-') > -1) {
-          // Format: YYYY-MM-DD
+        if (expenseDate.indexOf('-') > -1) {
           expenseMonth = expenseDate.substring(0, 7);
         }
       }
@@ -1068,11 +1063,11 @@ function calculateBudgetSpent(budgetId, month) {
           var expenseCategoryId = expenseCat[0].id || '';
           var expenseSubcategoryName = expenseCat[0].subcategory || '';
           
-          // Match logic với cả ID và Name
+          // ===== QUAN TRỌNG: LOGIC MATCHING =====
           var isMatch = false;
           
           if (budgetSubcategoryName) {
-            // Budget có subcategory → match cả main category và subcategory
+            // Budget có subcategory → phải match cả main + sub
             isMatch = (expenseCategoryId === budgetCategoryId) && 
                       (expenseSubcategoryName === budgetSubcategoryName);
           } else {
@@ -1083,23 +1078,26 @@ function calculateBudgetSpent(budgetId, month) {
           if (isMatch) {
             totalSpent += expenseAmount;
             matchedCount++;
-            console.log('Matched expense #' + (i+1) + ': ' + expenseAmount);
+            console.log('✓ Matched expense #' + (i+1) + ':', expenseAmount, 'đ');
+          } else {
+            console.log('✗ Not matched #' + (i+1) + ': ExpCat=' + expenseCategoryId + ', ExpSub=' + expenseSubcategoryName);
           }
         }
       } catch(e) {
-        console.log('Error parsing expense category row ' + i + ': ' + e.toString());
+        console.log('Error parsing expense category row', i, ':', e.toString());
       }
     }
     
-    console.log('Total matched: ' + matchedCount + ' expenses, Total spent: ' + totalSpent);
+    console.log('=== RESULT ===');
+    console.log('Total matched:', matchedCount, 'expenses');
+    console.log('Total spent:', totalSpent, 'đ');
     
     // Update budget
-    var planned = parseFloat(budgetData[budgetRow][4]) || 0; // Cột Kế hoạch
+    var planned = parseFloat(budgetData[budgetRow][4]) || 0;
     var remaining = planned - totalSpent;
     var percentage = planned > 0 ? Math.round((totalSpent / planned) * 100) : 0;
     var ratio = planned > 0 ? totalSpent / planned : 0;
     
-    // Calculate status
     var status = 'on-track';
     var alerts = [];
     
@@ -1111,13 +1109,12 @@ function calculateBudgetSpent(budgetId, month) {
       alerts.push('Sắp vượt ngân sách');
     }
     
-    // Update sheet với các cột đúng vị trí
-    budgetSheet.getRange(budgetRow + 1, 6).setValue(totalSpent); // Cột 6: Chi tiêu
-    budgetSheet.getRange(budgetRow + 1, 7).setValue(ratio); // Cột 7: Chênh lệch (ratio)
+    // Update sheet
+    budgetSheet.getRange(budgetRow + 1, 6).setValue(totalSpent);
+    budgetSheet.getRange(budgetRow + 1, 7).setValue(ratio);
     
-    // Update metadata
     var metadata = {
-      categoryName: budgetData[budgetRow][3], // Keep original
+      categoryName: budgetData[budgetRow][3],
       remaining: remaining,
       percentage: percentage,
       status: status,
@@ -1126,10 +1123,9 @@ function calculateBudgetSpent(budgetId, month) {
       matchedExpenses: matchedCount
     };
     
-    budgetSheet.getRange(budgetRow + 1, 8).setValue(JSON.stringify(metadata)); // Cột 8: Metadata
+    budgetSheet.getRange(budgetRow + 1, 8).setValue(JSON.stringify(metadata));
     
     console.log('✅ Budget updated successfully');
-    console.log('Spent: ' + totalSpent + ', Planned: ' + planned + ', Ratio: ' + ratio);
     
     return {
       success: true,
@@ -1142,7 +1138,7 @@ function calculateBudgetSpent(budgetId, month) {
     };
     
   } catch (error) {
-    console.log('Error in calculateBudgetSpent: ' + error.toString());
+    console.log('❌ ERROR:', error.toString());
     return { success: false, message: error.toString() };
   }
 }
@@ -2610,4 +2606,8 @@ function getLoanNotifications(daysBeforeDue) {
     console.error('Error getting notifications:', error);
     return [];
   }
+}
+
+function testTriggerBudgetUpdate() {
+  triggerBudgetUpdate('2025-10-31'); // Test với ngày của expense
 }
