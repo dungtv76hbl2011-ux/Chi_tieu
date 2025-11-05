@@ -1,1 +1,103 @@
+<script>
 
+// ========== NAVIGATION ==========
+function initNavigation() {
+  var navItems = document.querySelectorAll('.nav-item');
+  for (var i = 0; i < navItems.length; i++) {
+    navItems[i].addEventListener('click', function(e) {
+      e.preventDefault();
+      var page = this.getAttribute('data-page');
+      navigateToPage(page);
+    });
+  }
+}
+
+function navigateToPage(page) {
+  currentPage = page;
+  
+  var navItems = document.querySelectorAll('.nav-item');
+  for (var i = 0; i < navItems.length; i++) {
+    navItems[i].classList.remove('active');
+    if (navItems[i].getAttribute('data-page') === page) {
+      navItems[i].classList.add('active');
+    }
+  }
+  
+  var titles = {
+    'dashboard': 'Trang chủ',
+    'income': 'Thu nhập',
+    'expense': 'Chi tiêu',
+    'budget': 'Ngân sách',
+    'loan': 'Khoản vay',
+    'investment': 'Đầu tư',
+    'thirdparty': 'Thu chi hộ',
+    'accounts': 'Tài khoản',
+    'reports': 'Báo cáo',
+    'settings': 'Cài đặt'
+  };
+  
+  document.getElementById('pageTitle').textContent = titles[page] || page;
+  
+  switch(page) {
+    case 'dashboard':
+      showDashboard();
+      break;
+    case 'income':
+      showIncomePage();
+      break;
+    case 'expense':
+      showExpensePage();
+      break;
+    case 'budget':  // ← THÊM CASE NÀY
+      showBudgetPage();
+      break;  
+    case 'loan':  // ← THÊM CASE NÀY
+      showLoanPage();
+      break;
+    case 'accounts':
+      showAccountsPage();
+      break;
+    case 'settings':  // ← THÊM CASE NÀY
+      showSettingsPage();
+      break;  
+    default:
+      showPlaceholderPage(titles[page]);
+  }
+  
+  if (window.innerWidth <= 768) {
+    document.getElementById('sidebar').classList.remove('active');
+  }
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('active');
+}
+
+function showPlaceholderPage(title) {
+  document.getElementById('contentWrapper').innerHTML = 
+    '<div class="card"><h2>' + title + '</h2><p>Tính năng đang được hoàn thiện...</p></div>';
+}
+
+// Test Navigation
+(function testNavigation() {
+  console.log('=== Testing Navigation ===');
+  
+  // Test 1: Navigate to dashboard
+  navigateToPage('dashboard');
+  console.assert(currentPage === 'dashboard', 'currentPage should be dashboard');
+  console.assert(document.getElementById('pageTitle').textContent === 'Trang chủ', 'Page title should change');
+  
+  // Test 2: Navigate to income
+  navigateToPage('income');
+  console.assert(currentPage === 'income', 'currentPage should be income');
+  console.assert(document.getElementById('pageTitle').textContent === 'Thu nhập', 'Page title should change');
+  
+  // Test 3: Sidebar toggle (mobile)
+  var sidebar = document.getElementById('sidebar');
+  var hasActive = sidebar.classList.contains('active');
+  toggleSidebar();
+  console.assert(sidebar.classList.contains('active') !== hasActive, 'Sidebar should toggle');
+  
+  console.log('✅ Navigation tests passed');
+})();
+</script>
