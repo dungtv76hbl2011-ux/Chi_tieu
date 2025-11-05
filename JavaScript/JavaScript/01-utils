@@ -1,0 +1,37 @@
+<script>
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+  document.getElementById('modalBody').innerHTML = '';
+  document.getElementById('modalFooter').innerHTML = '';
+  editingCategoryId = null;
+}
+
+function showLoading() {
+  document.getElementById('loadingSpinner').style.display = 'flex';
+}
+
+function hideLoading() {
+  document.getElementById('loadingSpinner').style.display = 'none';
+}
+
+// Test formatCurrency
+console.assert(formatCurrency(1000000) === '1,000,000', 'formatCurrency failed');
+
+// Test parseCurrency  
+console.assert(parseCurrency('1,000,000') === 1000000, 'parseCurrency failed');
+
+// Test formatDate
+console.assert(formatDate('2025-10-20') === '20/10/2025', 'formatDate failed');
+
+// Test generateId
+var id = generateId('TN');
+console.assert(id.startsWith('TN'), 'generateId failed');
+
+// Test modal
+openModal('Test', 'Body', '<button>OK</button>');
+setTimeout(() => {
+  console.assert(document.getElementById('modal').style.display === 'flex', 'Modal not shown');
+  closeModal();
+}, 100);
+
+</script>
