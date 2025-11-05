@@ -1,1 +1,1866 @@
+<script>
 
+
+// ========================================
+// BUDGET PAGE - FULL FUNCTIONS
+// ========================================
+
+// ========== MAIN BUDGET PAGE ==========
+function showBudgetPage() {
+  console.log('=== SHOWING BUDGET PAGE ===');
+  
+  // Reset filters and page
+  budgetCurrentPage = 1;
+  budgetFilteredData = allBudgetData.slice();
+  
+  renderBudgetPage();
+}
+
+function applyBudgetFilters() {
+  // Get filter values
+  var fromMonth = document.getElementById('budgetFilterFromMonth')?.value || '';
+  var toMonth = document.getElementById('budgetFilterToMonth')?.value || '';
+  var category = document.getElementById('budgetFilterCategory')?.value || '';
+  
+  budgetFilters.monthFrom = fromMonth;
+  budgetFilters.monthTo = toMonth;
+  budgetFilters.category = category;
+  
+  // Filter data
+  budgetFilteredData = [];
+  
+  for (var i = 0; i < allBudgetData.length; i++) {
+    var item = allBudgetData[i];
+    
+    // Filter by month range
+    if (fromMonth && item['Tháng'] < fromMonth) continue;
+    if (toMonth && item['Tháng'] > toMonth) continue;
+    
+    // Filter by category
+    if (category) {
+      try {
+        var cat = JSON.parse(item['Danh mục ID']);
+        if (!cat || !cat[0] || cat[0].id !== category) continue;
+      } catch(e) {
+        continue;
+      }
+    }
+    
+    budgetFilteredData.push(item);
+  }
+}
+
+function clearBudgetFilters() {
+  budgetFilters = {
+    monthFrom: '',
+    monthTo: '',
+    category: ''
+  };
+  
+  budgetCurrentPage = 1;
+  budgetFilteredData = allBudgetData.slice();
+  
+  renderBudgetPage();
+}
+
+function changeBudgetItemsPerPage(value) {
+  budgetItemsPerPage = parseInt(value);
+  budgetCurrentPage = 1;
+  renderBudgetPage();
+}
+
+function renderBudgetTable() {
+  if (!budgetFilteredData || budgetFilteredData.length === 0) {
+    return '<tr><td colspan="8" class="text-center">Chưa có dữ liệu</td></tr>';
+  }
+  
+  var startIndex = (budgetCurrentPage - 1) * budgetItemsPerPage;
+  var endIndex = Math.min(startIndex + budgetItemsPerPage, budgetFilteredData.length);
+  
+  var html = '';
+  
+  for (var i = startIndex; i < endIndex; i++) {
+    var item = budgetFilteredData[i];
+    var planned = parseCurrency(item['Kế hoạch']);
+    var spent = parseCurrency(item['Chi tiêu']);
+    var remaining = planned - spent;
+    var percentage = planned > 0 ? Math.round((spent / planned) * 100) : 0;
+    
+    var status = 'Bình thường';
+    var statusColor = '#24c560';
+    
+    if (percentage >= 100) {
+      status = 'Vượt ngân sách';
+      statusColor = '#e94849';
+    } else if (percentage >= 90) {
+      status = 'Sắp vượt';
+      statusColor = '#f59e0b';
+    }
+    
+    var categoryDisplay = formatCategoryDisplay(item['Danh mục ID']);
+    
+    html += '<tr>';
+    html += '<td>' + (item['Tháng'] || 'N/A') + '</td>';
+    html += '<td>' + categoryDisplay + '</td>';
+    html += '<td style="font-weight: 600;">' + formatCurrency(planned) + ' đ</td>';
+    html += '<td style="color: #e94849;">' + formatCurrency(spent) + ' đ</td>';
+    html += '<td style="color: ' + (remaining >= 0 ? '#24c560' : '#e94849') + ';">' + formatCurrency(Math.abs(remaining)) + ' đ</td>';
+    html += '<td><span class="badge" style="background: ' + statusColor + '20; color: ' + statusColor + ';">' + percentage + '%</span></td>';
+    html += '<td><span style="color: ' + statusColor + ';">' + status + '</span></td>';
+    html += '<td class="action-buttons">';
+    html += '<button class="btn-primary btn-sm" onclick="editBudget(\'' + item.ID + '\')"><i class="fas fa-edit"></i></button>';
+    html += '<button class="btn-danger btn-sm" onclick="confirmDeleteBudget(\'' + item.ID + '\')"><i class="fas fa-trash"></i></button>';
+    html += '</td></tr>';
+  }
+  
+  return html;
+}
+
+function renderBudgetPagination(totalPages) {
+  if (totalPages <= 1) return '';
+  
+  var html = '<div style="display: flex; justify-content: center; align-items: center; margin-top: 20px; gap: 10px;">';
+  
+  html += '<button class="btn-secondary btn-sm" onclick="budgetGoToPage(' + (budgetCurrentPage - 1) + ')" ' + 
+    (budgetCurrentPage === 1 ? 'disabled' : '') + '><i class="fas fa-chevron-left"></i></button>';
+  
+  for (var i = 1; i <= Math.min(totalPages, 5); i++) {
+    if (i === budgetCurrentPage) {
+      html += '<button class="btn-primary btn-sm" disabled>' + i + '</button>';
+    } else {
+      html += '<button class="btn-secondary btn-sm" onclick="budgetGoToPage(' + i + ')">' + i + '</button>';
+    }
+  }
+  
+  html += '<button class="btn-secondary btn-sm" onclick="budgetGoToPage(' + (budgetCurrentPage + 1) + ')" ' + 
+    (budgetCurrentPage === totalPages ? 'disabled' : '') + '><i class="fas fa-chevron-right"></i></button>';
+  
+  html += '</div>';
+  
+  return html;
+}
+
+function budgetGoToPage(page) {
+  budgetCurrentPage = page;
+  renderBudgetPage();
+}
+
+function reloadBudgetData() {
+  loadSheetData('Ngân sách').then(function(data) {
+    allBudgetData = data;
+    budgetFilteredData = data.slice();
+    renderBudgetPage();
+  });
+}
+
+function forceUpdateAllBudgets() {
+  console.log('=== FORCE UPDATE ALL BUDGETS ===');
+  
+  // Get current month from filter or use current month
+  var month = budgetFilters.monthFrom || new Date().toISOString().substring(0, 7);
+  
+  // ===== CUSTOM MODAL THAY VÌ NATIVE CONFIRM =====
+  var modalBody = 
+    '<div style="text-align: center; padding: 20px;">' +
+      '<i class="fas fa-sync-alt" style="font-size: 48px; color: #f59e0b; margin-bottom: 20px;"></i>' +
+      '<h3 style="margin-bottom: 10px;">Cập nhật toàn bộ chi tiêu?</h3>' +
+      '<p style="color: #718096; margin-bottom: 5px;">Tháng: <strong>' + month + '</strong></p>' +
+      '<p style="color: #718096; font-size: 14px;">Hệ thống sẽ tính lại cột "Chi tiêu" từ bảng Chi tiêu</p>' +
+    '</div>';
+  
+  var modalFooter = 
+    '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-warning" onclick="executeUpdateAllBudgets(\'' + month + '\')">Cập nhật ngay</button>';
+  
+  openModal('Xác nhận cập nhật', modalBody, modalFooter);
+}
+
+/**
+ * Execute budget update after confirmation
+ * @param {string} month - Month to update (YYYY-MM)
+ */
+function executeUpdateAllBudgets(month) {
+  console.log('Executing update for month:', month);
+  
+  closeModal();
+  showLoading('Đang cập nhật ngân sách...');
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      hideLoading();
+      
+      console.log('Update response:', response);
+      
+      if (response.success) {
+        showToast('Đã cập nhật ' + response.updated + ' ngân sách', 'success');
+        
+        // Reload budget data
+        console.log('Reloading budget data...');
+        DataManager.refresh('Ngân sách').then(function() {
+          allBudgetData = DataManager.getBudget();
+          console.log('✓ Budget data reloaded:', allBudgetData.length, 'records');
+          
+          // Re-render page
+          renderBudgetPage();
+        }).catch(function(error) {
+          console.error('Error reloading budget:', error);
+          showToast('Lỗi reload: ' + error.message, 'error');
+        });
+      } else {
+        showToast('Lỗi: ' + response.message, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Backend error:', error);
+      showToast('Lỗi kết nối: ' + error.message, 'error');
+    })
+    .handleRequest('updateAllBudgets', { month: month });
+}
+
+
+
+function reloadExpenseData() {
+  loadSheetData('Chi tiêu').then(function(data) {
+    allExpenseData = data;
+    if (currentPage === 'expense') {
+      showExpensePage();
+    }
+  });
+}
+
+
+
+// ========== RENDER BUDGET PAGE - COMPLETE VERSION ==========
+function renderBudgetPage() {
+  console.log('=== RENDERING BUDGET PAGE ===');
+  console.log('Budget data:', allBudgetData.length, 'records');
+  
+  // Apply filters
+  applyBudgetFilters();
+  
+  var totalRecords = budgetFilteredData.length;
+  var totalPages = Math.ceil(totalRecords / budgetItemsPerPage);
+  
+  if (budgetCurrentPage > totalPages && totalPages > 0) {
+    budgetCurrentPage = totalPages;
+  }
+  
+  // Calculate totals
+  var totalPlanned = 0;
+  var totalSpent = 0;
+  
+  for (var i = 0; i < budgetFilteredData.length; i++) {
+    totalPlanned += parseCurrency(budgetFilteredData[i]['Kế hoạch']);
+    totalSpent += parseCurrency(budgetFilteredData[i]['Chi tiêu']);
+  }
+  
+  var totalRemaining = totalPlanned - totalSpent;
+  var overallPercentage = totalPlanned > 0 ? Math.round((totalSpent / totalPlanned) * 100) : 0;
+  
+  var html = '<div class="card">';
+  html += '<div class="card-header">';
+  html += '<h2 class="card-title">Quản lý Ngân sách</h2>';
+  html += '<div style="display: flex; gap: 10px;">';
+  html += '<button class="btn-secondary" onclick="downloadBudgetTemplate()"><i class="fas fa-download"></i> Tải mẫu Excel</button>';
+  html += '<button class="btn-secondary" onclick="openBudgetImportModal()"><i class="fas fa-file-import"></i> Import Excel</button>';
+  html += '<button class="btn-warning" onclick="updateAllBudgetsManually()"><i class="fas fa-sync-alt"></i> Cập nhật chi tiêu</button>';
+  html += '<button class="btn-primary" onclick="openBudgetModal()"><i class="fas fa-plus"></i> Thêm ngân sách</button>';
+  html += '</div></div>';
+  
+  // FILTER SECTION
+  html += '<div style="background: #f7fafc; padding: 15px; border-radius: 8px; margin-bottom: 15px;">';
+  html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">';
+  
+  html += '<div><label style="display: block; margin-bottom: 5px; font-size: 13px; color: #4a5568;">Từ tháng</label>';
+  html += '<input type="month" id="budgetFilterFromMonth" class="form-control" onchange="renderBudgetPage()"></div>';
+  
+  html += '<div><label style="display: block; margin-bottom: 5px; font-size: 13px; color: #4a5568;">Đến tháng</label>';
+  html += '<input type="month" id="budgetFilterToMonth" class="form-control" onchange="renderBudgetPage()"></div>';
+  
+  html += '<div><label style="display: block; margin-bottom: 5px; font-size: 13px; color: #4a5568;">Danh mục</label>';
+  html += '<select id="budgetFilterCategory" class="form-control" onchange="renderBudgetPage()">';
+  html += '<option value="">Tất cả</option>';
+  html += renderBudgetCategoryOptions();
+  html += '</select></div>';
+  
+  html += '<div style="display: flex; align-items: flex-end;">';
+  html += '<button class="btn-secondary" onclick="clearBudgetFilters()" style="width: 100%;">Xóa bộ lọc</button>';
+  html += '</div></div></div>';
+  
+  // SUMMARY CARDS
+  html += '<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; color: white;">';
+  html += '<div style="text-align: center; font-size: 14px; opacity: 0.9; margin-bottom: 15px;">💰 TỔNG HỢP NGÂN SÁCH</div>';
+  html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">';
+  
+  html += '<div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px;">';
+  html += '<div style="font-size: 13px; opacity: 0.8;">Tổng kế hoạch</div>';
+  html += '<div style="font-size: 24px; font-weight: 600; margin-top: 5px;">' + formatCurrency(totalPlanned) + ' đ</div></div>';
+  
+  html += '<div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px;">';
+  html += '<div style="font-size: 13px; opacity: 0.8;">Tổng chi tiêu</div>';
+  html += '<div style="font-size: 24px; font-weight: 600; margin-top: 5px;">' + formatCurrency(totalSpent) + ' đ</div></div>';
+  
+  html += '<div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px;">';
+  html += '<div style="font-size: 13px; opacity: 0.8;">Còn lại</div>';
+  html += '<div style="font-size: 24px; font-weight: 600; margin-top: 5px; color: ' + (totalRemaining >= 0 ? '#24c560' : '#e94849') + ';">' + formatCurrency(totalRemaining) + ' đ</div></div>';
+  
+  html += '<div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px;">';
+  html += '<div style="font-size: 13px; opacity: 0.8;">Tỷ lệ thực hiện</div>';
+  html += '<div style="font-size: 24px; font-weight: 600; margin-top: 5px;">' + overallPercentage + '%</div></div>';
+  
+  html += '</div></div>';
+  
+  // PAGINATION INFO
+  html += '<div style="margin-bottom: 10px; color: #718096; display: flex; justify-content: space-between; align-items: center;">';
+  html += '<span>Hiển thị ' + ((budgetCurrentPage - 1) * budgetItemsPerPage + 1) + ' - ';
+  html += Math.min(budgetCurrentPage * budgetItemsPerPage, totalRecords) + ' trong tổng số ' + totalRecords + ' bản ghi</span>';
+  html += '<select onchange="changeBudgetItemsPerPage(this.value)" class="form-control" style="width: auto; padding: 5px 10px;">';
+  html += '<option value="10"' + (budgetItemsPerPage === 10 ? ' selected' : '') + '>10</option>';
+  html += '<option value="20"' + (budgetItemsPerPage === 20 ? ' selected' : '') + '>20</option>';
+  html += '<option value="50"' + (budgetItemsPerPage === 50 ? ' selected' : '') + '>50</option>';
+  html += '</select></div>';
+  
+  // TABLE
+  html += '<div style="overflow: auto; max-height: calc(100vh - 500px);">';
+  html += '<table><thead><tr>';
+  html += '<th>THÁNG</th>';
+  html += '<th>DANH MỤC</th>';
+  html += '<th>KẾ HOẠCH</th>';
+  html += '<th>CHI TIÊU</th>';
+  html += '<th>CÒN LẠI</th>';
+  html += '<th>%</th>';
+  html += '<th>TRẠNG THÁI</th>';
+  html += '<th>HÀNH ĐỘNG</th>';
+  html += '</tr></thead>';
+  html += '<tbody>' + renderBudgetTable() + '</tbody>';
+  html += '</table></div>';
+  
+  // PAGINATION
+  html += renderBudgetPagination(totalPages);
+  
+  html += '</div>';
+  
+  document.getElementById('contentWrapper').innerHTML = html;
+  
+  // Restore filter values
+  restoreBudgetFilters();
+}
+
+function updateAllBudgetsManually() {
+  console.log('=== MANUAL UPDATE ALL BUDGETS ===');
+  
+  if (!confirm('Cập nhật lại toàn bộ chi tiêu từ bảng Chi tiêu?')) {
+    return;
+  }
+  
+  showLoading('Đang cập nhật ngân sách...');
+  
+  // Get unique months from current budget data
+  var months = [];
+  for (var i = 0; i < allBudgetData.length; i++) {
+    var month = allBudgetData[i]['Tháng'];
+    if (month && months.indexOf(month) === -1) {
+      months.push(month);
+    }
+  }
+  
+  console.log('Months to update:', months);
+  
+  if (months.length === 0) {
+    hideLoading();
+    showToast('Không có ngân sách nào để cập nhật', 'warning');
+    return;
+  }
+  
+  var updatedCount = 0;
+  var totalMonths = months.length;
+  
+  // Update each month sequentially
+  function updateNextMonth(index) {
+    if (index >= totalMonths) {
+      // All done
+      hideLoading();
+      showToast('Đã cập nhật ' + updatedCount + ' tháng', 'success');
+      
+      // Reload budget data
+      reloadBudgetData();
+      return;
+    }
+    
+    var month = months[index];
+    console.log('Updating month:', month);
+    
+    google.script.run
+      .withSuccessHandler(function(response) {
+        if (response.success) {
+          updatedCount++;
+          console.log('✅ Month ' + month + ' updated:', response.updated, 'budgets');
+        }
+        
+        // Update next month
+        updateNextMonth(index + 1);
+      })
+      .withFailureHandler(function(error) {
+        console.error('Error updating month ' + month + ':', error);
+        updateNextMonth(index + 1);
+      })
+      .handleRequest('updateAllBudgets', { month: month });
+  }
+  
+  // Start updating
+  updateNextMonth(0);
+}
+
+// ========================================
+// BUDGET PAGE - HELPER FUNCTIONS
+// ========================================
+
+/**
+ * Render budget category options for dropdown
+ * @param {Array} categories - Array of budget categories
+ * @param {string} selectedId - Selected category ID
+ * @return {string} HTML options
+ */
+function renderBudgetCategoryOptions(categories, selectedId) {
+  var html = '<option value="">-- Chọn danh mục --</option>';
+  
+  if (!categories || categories.length === 0) {
+    return html;
+  }
+  
+  for (var i = 0; i < categories.length; i++) {
+    var cat = categories[i];
+    var selected = cat.id === selectedId ? ' selected' : '';
+    var icon = cat.icon ? cat.icon + ' ' : '';
+    
+    html += '<option value="' + cat.id + '"' + selected + '>' + 
+            icon + cat.name + 
+            '</option>';
+  }
+  
+  return html;
+}
+
+/**
+ * Render budget subcategory options
+ * @param {string} parentId - Parent category ID
+ * @param {string} selectedSubcategory - Selected subcategory name
+ * @return {string} HTML options
+ */
+function renderBudgetSubcategoryOptions(parentId, selectedSubcategory) {
+  var html = '<option value="">-- Không chọn danh mục con --</option>';
+  
+  if (!parentId || !budgetSubcategories[parentId]) {
+    return html;
+  }
+  
+  var subcats = budgetSubcategories[parentId];
+  
+  for (var i = 0; i < subcats.length; i++) {
+    var subcat = subcats[i];
+    var selected = subcat === selectedSubcategory ? ' selected' : '';
+    
+    html += '<option value="' + subcat + '"' + selected + '>├─ ' + 
+            subcat + 
+            '</option>';
+  }
+  
+  return html;
+}
+
+// ========== CALCULATE SUMMARY ==========
+function renderBudgetSummary() {
+  var totalPlanned = 0;
+  var totalSpent = 0;
+  
+  for (var i = 0; i < budgetFilteredData.length; i++) {
+    totalPlanned += parseCurrency(budgetFilteredData[i]['Kế hoạch']);
+    totalSpent += parseCurrency(budgetFilteredData[i]['Chi tiêu']);
+  }
+  
+  var totalRemaining = totalPlanned - totalSpent;
+  var totalPercentage = totalPlanned > 0 ? Math.round((totalSpent / totalPlanned) * 100) : 0;
+  
+  var html = 
+    '<div style="background: rgba(255,255,255,0.15); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);">' +
+    '<div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-bottom: 8px; font-weight: 500;">Tổng kế hoạch</div>' +
+    '<div style="font-size: 24px; font-weight: 700; color: #fff;">' + formatCurrency(totalPlanned) + ' đ</div>' +
+    '</div>' +
+    
+    '<div style="background: rgba(255,255,255,0.15); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);">' +
+    '<div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-bottom: 8px; font-weight: 500;">Tổng chi tiêu</div>' +
+    '<div style="font-size: 24px; font-weight: 700; color: #fff;">' + formatCurrency(totalSpent) + ' đ</div>' +
+    '</div>' +
+    
+    '<div style="background: rgba(255,255,255,0.15); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);">' +
+    '<div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-bottom: 8px; font-weight: 500;">Còn lại</div>' +
+    '<div style="font-size: 24px; font-weight: 700; color: ' + (totalRemaining >= 0 ? '#4ade80' : '#fca5a5') + ';">' + 
+    formatCurrency(totalRemaining) + ' đ</div>' +
+    '</div>' +
+    
+    '<div style="background: rgba(255,255,255,0.15); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);">' +
+    '<div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-bottom: 8px; font-weight: 500;">Tỷ lệ thực hiện</div>' +
+    '<div style="font-size: 24px; font-weight: 700; color: ' + 
+    (totalPercentage >= 100 ? '#fca5a5' : totalPercentage >= 90 ? '#fde047' : '#4ade80') + ';">' + 
+    totalPercentage + '%</div>' +
+    '</div>';
+  
+  return html;
+}
+
+
+// ========== CALCULATE SUMMARY ==========
+function renderBudgetSummary() {
+  var totalPlanned = 0;
+  var totalSpent = 0;
+  
+  for (var i = 0; i < budgetFilteredData.length; i++) {
+    totalPlanned += parseCurrency(budgetFilteredData[i]['Kế hoạch']);
+    totalSpent += parseCurrency(budgetFilteredData[i]['Chi tiêu']);
+  }
+  
+  var totalRemaining = totalPlanned - totalSpent;
+  var totalPercentage = totalPlanned > 0 ? Math.round((totalSpent / totalPlanned) * 100) : 0;
+  
+  var html = 
+    '<div style="background: rgba(255,255,255,0.15); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);">' +
+    '<div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-bottom: 8px; font-weight: 500;">Tổng kế hoạch</div>' +
+    '<div style="font-size: 24px; font-weight: 700; color: #fff;">' + formatCurrency(totalPlanned) + ' đ</div>' +
+    '</div>' +
+    
+    '<div style="background: rgba(255,255,255,0.15); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);">' +
+    '<div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-bottom: 8px; font-weight: 500;">Tổng chi tiêu</div>' +
+    '<div style="font-size: 24px; font-weight: 700; color: #fff;">' + formatCurrency(totalSpent) + ' đ</div>' +
+    '</div>' +
+    
+    '<div style="background: rgba(255,255,255,0.15); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);">' +
+    '<div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-bottom: 8px; font-weight: 500;">Còn lại</div>' +
+    '<div style="font-size: 24px; font-weight: 700; color: ' + (totalRemaining >= 0 ? '#4ade80' : '#fca5a5') + ';">' + 
+    formatCurrency(totalRemaining) + ' đ</div>' +
+    '</div>' +
+    
+    '<div style="background: rgba(255,255,255,0.15); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);">' +
+    '<div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-bottom: 8px; font-weight: 500;">Tỷ lệ thực hiện</div>' +
+    '<div style="font-size: 24px; font-weight: 700; color: ' + 
+    (totalPercentage >= 100 ? '#fca5a5' : totalPercentage >= 90 ? '#fde047' : '#4ade80') + ';">' + 
+    totalPercentage + '%</div>' +
+    '</div>';
+  
+  return html;
+}
+
+function clearBudgetFilters() {
+  budgetFilters = { 
+    monthFrom: '', 
+    monthTo: '', 
+    category: '' 
+  };
+  budgetCurrentPage = 1;
+  budgetFilteredData = allBudgetData.slice();
+  renderBudgetPage();
+  
+  setTimeout(function() {
+    var monthFromEl = document.getElementById('budgetFilterMonthFrom');
+    var monthToEl = document.getElementById('budgetFilterMonthTo');
+    var categoryEl = document.getElementById('budgetFilterCategory');
+    
+    if (monthFromEl) monthFromEl.value = '';
+    if (monthToEl) monthToEl.value = '';
+    if (categoryEl) categoryEl.value = '';
+  }, 100);
+}
+
+// ===== THÊM FUNCTION NÀY =====
+/**
+ * Restore budget filters from budgetFilters object
+ * Called after page refresh to maintain filter state
+ */
+function restoreBudgetFilters() {
+  console.log('Restoring budget filters:', budgetFilters);
+  
+  // Restore month from filter
+  var monthFromEl = document.getElementById('budgetFilterMonthFrom');
+  var monthToEl = document.getElementById('budgetFilterMonthTo');
+  var categoryEl = document.getElementById('budgetFilterCategory');
+  
+  if (monthFromEl && budgetFilters.monthFrom) {
+    monthFromEl.value = budgetFilters.monthFrom;
+  }
+  
+  if (monthToEl && budgetFilters.monthTo) {
+    monthToEl.value = budgetFilters.monthTo;
+  }
+  
+  if (categoryEl && budgetFilters.category) {
+    categoryEl.value = budgetFilters.category;
+  }
+  
+  console.log('✓ Budget filters restored');
+}
+// ===== KẾT THÚC =====
+
+function changeBudgetItemsPerPage(value) {
+  budgetItemsPerPage = parseInt(value);
+  budgetCurrentPage = 1;
+  renderBudgetPage();
+}
+
+function updateBudgetsForMonth(month) {
+  console.log('=== UPDATE BUDGETS FOR MONTH:', month, '===');
+  
+  // Call backend to update all budgets for this month
+  google.script.run
+    .withSuccessHandler(function(response) {
+      console.log('Budget update response:', response);
+      
+      if (response.success) {
+        console.log('✅ Budgets updated:', response.updated, 'records');
+        
+        // Reload budget data if on budget page
+        if (currentPage === 'budget') {
+          setTimeout(function() {
+            loadSheetData('Ngân sách').then(function(data) {
+              allBudgetData = data;
+              budgetFilteredData = data.slice();
+              renderBudgetPage();
+              console.log('✅ Budget page refreshed');
+            });
+          }, 1000);
+        }
+        
+        // Update local cache
+        setTimeout(function() {
+          DataManager.refresh('budget').then(function() {
+            console.log('✅ Budget cache refreshed');
+          });
+        }, 1500);
+        
+      } else {
+        console.error('Budget update failed:', response.message);
+      }
+    })
+    .withFailureHandler(function(error) {
+      console.error('Budget update error:', error);
+    })
+    .handleRequest('updateAllBudgets', { month: month });
+}
+
+function updateBudgetManually() {
+  console.log('=== MANUAL BUDGET UPDATE ===');
+  
+  showLoading('Đang cập nhật ngân sách...');
+  
+  // Get current month filter or use current month
+  var currentMonth = new Date().toISOString().substring(0, 7);
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response.success) {
+        showToast('Đã cập nhật ' + response.updated + ' ngân sách', 'success');
+        
+        // Reload budget data
+        loadSheetData('Ngân sách').then(function(data) {
+          allBudgetData = data;
+          budgetFilteredData = data.slice();
+          renderBudgetPage();
+          hideLoading();
+        });
+      } else {
+        hideLoading();
+        showToast('Lỗi cập nhật: ' + response.message, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .handleRequest('updateAllBudgets', { month: currentMonth });
+}
+
+// ========== TABLE RENDER ==========
+function renderBudgetTableWithPagination() {
+  console.log('Rendering budget table, filtered data:', budgetFilteredData.length);
+  
+  if (!budgetFilteredData || budgetFilteredData.length === 0) {
+    return '<tr><td colspan="8" class="text-center">Chưa có dữ liệu</td></tr>';
+  }
+  
+  var startIndex = (budgetCurrentPage - 1) * budgetItemsPerPage;
+  var endIndex = Math.min(startIndex + budgetItemsPerPage, budgetFilteredData.length);
+  
+  console.log('Rendering from', startIndex, 'to', endIndex);
+  
+  var html = '';
+  
+  for (var i = startIndex; i < endIndex; i++) {
+    var item = budgetFilteredData[i];
+    var id = item.ID || 'N/A';
+    
+    console.log('Rendering budget item:', item);
+    
+    var categoryName = 'N/A';
+    var categoryIcon = '';
+    var categoryColor = '';
+
+    try {
+      var cat = typeof item['Danh mục ID'] === 'string' ? 
+        JSON.parse(item['Danh mục ID']) : item['Danh mục ID'];
+      
+      if (cat && cat[0]) {
+        var categoryId = cat[0].id;
+        
+        // Get icon & color from cache
+        var categoryInfo = categoryCache[categoryId];
+        if (categoryInfo) {
+          categoryIcon = categoryInfo.icon || '';
+          categoryColor = categoryInfo.color || '#6b7280';
+        }
+        
+        categoryName = cat[0].name || 'N/A';
+        if (cat[0].subcategory) {
+          categoryName += ' - ' + cat[0].subcategory;
+        }
+      }
+    } catch(e) {
+      console.error('Parse category error:', e);
+    }
+
+    
+    var planned = parseCurrency(item['Kế hoạch']);
+    var spent = parseCurrency(item['Chi tiêu']);
+    var remaining = planned - spent;
+    var percentage = planned > 0 ? Math.round((spent / planned) * 100) : 0;
+    
+    var status = 'on-track';
+    var statusBadge = 'badge-success';
+    var statusText = 'Bình thường';
+    
+    if (percentage >= 100) {
+      status = 'exceeded';
+      statusBadge = 'badge-danger';
+      statusText = 'Vượt ngân sách';
+    } else if (percentage >= 90) {
+      status = 'warning';
+      statusBadge = 'badge-warning';
+      statusText = 'Cảnh báo';
+    }
+    
+    var progressColor = percentage >= 100 ? '#e94849' : percentage >= 90 ? '#f59e0b' : '#24c560';
+    
+    html += '<tr>' +
+      '<td>' + (item['Tháng'] || 'N/A') + '</td>' +
+      '<td>' + 
+        (categoryIcon ? 
+          '<span style="display: inline-flex; align-items: center; gap: 8px;">' +
+          '<span style="background: ' + categoryColor + '; color: white; padding: 4px 8px; border-radius: 6px; font-size: 16px;">' + 
+          categoryIcon + 
+          '</span>' +
+          '<span>' + categoryName + '</span>' +
+          '</span>' 
+          : categoryName) +
+      '</td>' +
+      '<td style="color: #3782f4; font-weight: 600;">' + formatCurrency(planned) + ' đ</td>' +
+      '<td style="color: #e94849; font-weight: 600;">' + formatCurrency(spent) + ' đ</td>' +
+      '<td style="color: ' + (remaining >= 0 ? '#24c560' : '#e94849') + '; font-weight: 600;">' + formatCurrency(remaining) + ' đ</td>' +
+      '<td>' +
+      '<div style="width: 80px;">' +
+      '<div style="background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;">' +
+      '<div style="background: ' + progressColor + '; width: ' + Math.min(percentage, 100) + '%; height: 100%;"></div>' +
+      '</div>' +
+      '<span style="font-size: 11px; color: #4a5568;">' + percentage + '%</span>' +
+      '</div>' +
+      '</td>' +
+      '<td><span class="badge ' + statusBadge + '">' + statusText + '</span></td>' +
+      '<td class="action-buttons">' +
+      '<button class="btn-primary btn-sm" onclick="editBudget(\'' + id + '\')"><i class="fas fa-edit"></i></button>' +
+      '<button class="btn-danger btn-sm" onclick="confirmDeleteBudget(\'' + id + '\')"><i class="fas fa-trash"></i></button>' +
+      '</td></tr>';
+  }
+  
+  return html;
+}
+
+// ========== PAGINATION ==========
+function renderBudgetPagination(totalPages) {
+  if (totalPages <= 1) return '';
+  
+  var html = '<div style="display: flex; justify-content: center; align-items: center; margin-top: 20px; gap: 10px;">';
+  
+  html += '<button class="btn-secondary btn-sm" onclick="budgetGoToPage(' + (budgetCurrentPage - 1) + ')" ' + 
+    (budgetCurrentPage === 1 ? 'disabled' : '') + '><i class="fas fa-chevron-left"></i></button>';
+  
+  var startPage = Math.max(1, budgetCurrentPage - 2);
+  var endPage = Math.min(totalPages, budgetCurrentPage + 2);
+  
+  if (startPage > 1) {
+    html += '<button class="btn-secondary btn-sm" onclick="budgetGoToPage(1)">1</button>';
+    if (startPage > 2) html += '<span>...</span>';
+  }
+  
+  for (var i = startPage; i <= endPage; i++) {
+    if (i === budgetCurrentPage) {
+      html += '<button class="btn-primary btn-sm" disabled>' + i + '</button>';
+    } else {
+      html += '<button class="btn-secondary btn-sm" onclick="budgetGoToPage(' + i + ')">' + i + '</button>';
+    }
+  }
+  
+  if (endPage < totalPages) {
+    if (endPage < totalPages - 1) html += '<span>...</span>';
+    html += '<button class="btn-secondary btn-sm" onclick="budgetGoToPage(' + totalPages + ')">' + totalPages + '</button>';
+  }
+  
+  html += '<button class="btn-secondary btn-sm" onclick="budgetGoToPage(' + (budgetCurrentPage + 1) + ')" ' + 
+    (budgetCurrentPage === totalPages ? 'disabled' : '') + '><i class="fas fa-chevron-right"></i></button>';
+  
+  html += '</div>';
+  
+  return html;
+}
+
+function budgetGoToPage(page) {
+  budgetCurrentPage = page;
+  renderBudgetPage();
+  window.scrollTo(0, 0);
+}
+
+// ========================================
+// BUDGET MODAL - OPTIMIZED VERSION
+// ========================================
+
+function openBudgetModal(id) {
+  console.log('=== OPENING BUDGET MODAL ===', id ? 'EDIT' : 'CREATE');
+  
+  var isEdit = !!id;
+  var item = {};
+  
+  if (isEdit) {
+    const budgetList = DataManager.getBudget();
+    item = budgetList.find(i => i.ID === id) || {};
+    
+    if (!item.ID) {
+      showToast('Không tìm thấy bản ghi', 'error');
+      return;
+    }
+  }
+  
+  // Parse existing data
+  var categoryId = '';
+  var subcategoryId = '';
+  
+  if (isEdit && item['Danh mục ID']) {
+    try {
+      var cat = typeof item['Danh mục ID'] === 'string' ? 
+        JSON.parse(item['Danh mục ID']) : item['Danh mục ID'];
+      if (cat && cat[0]) {
+        categoryId = cat[0].id || '';
+        subcategoryId = cat[0].subcategoryId || '';
+      }
+    } catch(e) {
+      console.error('Parse category error:', e);
+    }
+  }
+  
+  var currentMonth = new Date().toISOString().substring(0, 7);
+  var currentSpent = isEdit ? parseCurrency(item['Chi tiêu']) : 0;
+  
+  // Build modal HTML
+  var body = 
+    '<form id="budgetForm" onsubmit="handleSaveBudget(event, \'' + (id || '') + '\')">' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-calendar-alt"></i> Tháng <span style="color: red;">*</span></label>' +
+    '<input type="month" id="budgetMonth" name="Tháng" class="form-control" value="' + 
+    (item['Tháng'] || currentMonth) + '" required>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-tag"></i> Danh mục chính <span style="color: red;">*</span></label>' +
+    '<select id="budgetCategory" name="Danh mục" class="form-control" onchange="loadBudgetSubcategories()" required>' +
+    '<option value="">-- Loading categories... --</option>' +
+    '</select>' +
+    '</div>' +
+    
+    '<div class="form-group" id="budgetSubcategoryWrapper" style="display: none;">' +
+    '<label><i class="fas fa-sitemap"></i> Danh mục con (Tùy chọn)</label>' +
+    '<select id="budgetSubcategory" class="form-control">' +
+    '<option value="">-- Không chọn --</option>' +
+    '</select>' +
+    '<small style="color: #718096; display: block; margin-top: 5px;">Nếu không chọn, sẽ tính tổng tất cả danh mục con</small>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-wallet"></i> Kế hoạch (VNĐ) <span style="color: red;">*</span></label>' +
+    '<input type="text" id="budgetPlanned" name="Kế hoạch" class="form-control currency-input" value="' + 
+    (isEdit ? formatCurrency(item['Kế hoạch']) : '0') + '" required>' +
+    '</div>' +
+    
+    (isEdit ? 
+      '<div class="form-group">' +
+      '<label><i class="fas fa-chart-line"></i> Chi tiêu hiện tại <i class="fas fa-info-circle" title="Được cập nhật tự động từ bảng Chi tiêu"></i></label>' +
+      '<input type="text" class="form-control" value="' + formatCurrency(currentSpent) + ' đ" disabled style="background: #f7fafc; font-weight: 600; color: #e94849;">' +
+      '<small style="color: #718096; display: block; margin-top: 5px;">💡 Giá trị này được cập nhật tự động từ bảng Chi tiêu</small>' +
+      '</div>' 
+      : '') +
+    
+    '<div style="background: #fffbeb; border-left: 3px solid #f59e0b; padding: 12px; border-radius: 4px; margin-top: 15px;">' +
+    '<strong style="color: #92400e;">💡 Lưu ý:</strong><br>' +
+    '<ul style="margin: 5px 0 0 0; padding-left: 20px; font-size: 13px; color: #78350f;">' +
+    '<li>Chỉ cần nhập <strong>Kế hoạch</strong></li>' +
+    '<li>Cột <strong>Chi tiêu</strong> sẽ tự động cập nhật từ bảng Chi tiêu</li>' +
+    '<li>Sử dụng nút <strong>"Cập nhật chi tiêu"</strong> để làm mới dữ liệu</li>' +
+    '</ul>' +
+    '</div>' +
+    
+    '</form>';
+  
+  var footer = 
+    '<button type="button" class="btn-secondary" onclick="closeModal()">' +
+    '<i class="fas fa-times"></i> Hủy' +
+    '</button>' +
+    '<button type="button" class="btn-primary" onclick="document.getElementById(\'budgetForm\').requestSubmit()">' +
+    '<i class="fas fa-save"></i> Lưu' +
+    '</button>';
+  
+  openModal(
+    isEdit ? '✏️ Sửa ngân sách' : '➕ Thêm ngân sách', 
+    body, 
+    footer
+  );
+  
+  // Initialize after modal opens
+  setTimeout(function() {
+    console.log('🔧 Initializing budget modal...');
+    
+    // 1. Load categories from cache (use expense categories)
+    const categories = DataManager.getCategories('expense');
+    console.log('✅ Loaded', categories.length, 'expense categories from cache');
+    
+    var categorySelect = document.getElementById('budgetCategory');
+    if (categorySelect) {
+      categorySelect.innerHTML = renderCategoryOptions(categories, categoryId);
+      
+      if (categoryId) {
+        loadBudgetSubcategories().then(function() {
+          if (subcategoryId) {
+            var subcatSelect = document.getElementById('budgetSubcategory');
+            if (subcatSelect) {
+              subcatSelect.value = subcategoryId;
+            }
+          }
+        });
+      }
+    }
+    
+    // 2. Setup currency input
+    setupCurrencyInput(document.getElementById('budgetPlanned'));
+    
+    // 3. Enable real-time validation
+    const form = document.getElementById('budgetForm');
+    if (form) {
+      Validator.enableRealTimeValidation(form, 'budget');
+    }
+    
+    // 4. Focus first input
+    document.getElementById('budgetMonth').focus();
+    
+    console.log('✅ Budget modal initialized');
+  }, 100);
+}
+
+// ========================================
+// LOAD BUDGET SUBCATEGORIES
+// ========================================
+
+function loadBudgetSubcategories() {
+  return new Promise(function(resolve, reject) {
+    var categorySelect = document.getElementById('budgetCategory');
+    var subcategoryWrapper = document.getElementById('budgetSubcategoryWrapper');
+    var subcategorySelect = document.getElementById('budgetSubcategory');
+    
+    if (!categorySelect || !subcategoryWrapper || !subcategorySelect) {
+      reject('Elements not found');
+      return;
+    }
+    
+    var categoryId = categorySelect.value;
+    
+    if (!categoryId) {
+      subcategoryWrapper.style.display = 'none';
+      subcategorySelect.innerHTML = '<option value="">-- Không chọn --</option>';
+      resolve();
+      return;
+    }
+    
+    console.log('📥 Loading subcategories for:', categoryId);
+    
+    subcategorySelect.innerHTML = '<option value="">-- Đang tải... --</option>';
+    subcategoryWrapper.style.display = 'block';
+    
+    google.script.run
+      .withSuccessHandler(function(response) {
+        if (response.success && response.data.length > 0) {
+          console.log('✅ Loaded', response.data.length, 'subcategories');
+          subcategorySelect.innerHTML = renderSubcategoryOptions(response.data, '');
+          subcategoryWrapper.style.display = 'block';
+        } else {
+          subcategorySelect.innerHTML = '<option value="">-- Không có danh mục con --</option>';
+          subcategoryWrapper.style.display = 'block';
+        }
+        resolve();
+      })
+      .withFailureHandler(function(error) {
+        console.error('❌ Load subcategories error:', error);
+        subcategorySelect.innerHTML = '<option value="">-- Lỗi tải dữ liệu --</option>';
+        reject(error);
+      })
+      .handleRequest('getSubcategories', { 
+        parentId: categoryId,
+        userId: currentUser.userId 
+      });
+  });
+}
+
+function updateBudgetSubcategories() {
+  var categoryEl = document.getElementById('budgetCategory');
+  var subcategoryEl = document.getElementById('budgetSubcategory');
+  var wrapperEl = document.getElementById('subcategoryWrapper');
+  
+  console.log('updateBudgetSubcategories called');
+  console.log('Category:', categoryEl ? categoryEl.value : 'null');
+  console.log('budgetSubcategories:', budgetSubcategories);
+  
+  if (!categoryEl || !subcategoryEl || !wrapperEl) {
+    console.error('Elements not found');
+    return;
+  }
+  
+  var category = categoryEl.value;
+  
+  if (!category) {
+    wrapperEl.style.display = 'none';
+    return;
+  }
+  
+  // Clear existing options
+  subcategoryEl.innerHTML = '<option value="">-- Chọn danh mục con --</option>';
+  
+  // Add subcategories
+  var subcats = budgetSubcategories[category] || [];
+  console.log('Subcategories for', category, ':', subcats);
+  
+  for (var i = 0; i < subcats.length; i++) {
+    var option = document.createElement('option');
+    option.value = subcats[i];
+    option.textContent = subcats[i];
+    subcategoryEl.appendChild(option);
+  }
+  
+  wrapperEl.style.display = 'block';
+}
+
+// ========================================
+// SAVE BUDGET - WITH VALIDATION & ERROR RECOVERY
+// ========================================
+
+async function handleSaveBudget(event, id) {
+  event.preventDefault();
+  
+  console.log('=== SAVING BUDGET ===', id ? 'UPDATE' : 'CREATE');
+  
+  Validator.clearErrors();
+  
+  // Collect form data
+  var formData = {
+    'Tháng': document.getElementById('budgetMonth').value,
+    'Danh mục': document.getElementById('budgetCategory').value,
+    'Kế hoạch': parseCurrency(document.getElementById('budgetPlanned').value)
+  };
+  
+  var subcategoryId = document.getElementById('budgetSubcategory') ? 
+    document.getElementById('budgetSubcategory').value : '';
+  
+  // Validate
+  const validation = Validator.validate(formData, 'budget');
+  
+  if (!validation.valid) {
+    console.log('❌ Validation failed:', validation.errors);
+    Validator.showErrors(validation.errors);
+    return;
+  }
+  
+  // Get category details
+  var categoryInfo = DataManager.getCategoryById(formData['Danh mục']);
+  var categoryName = categoryInfo ? categoryInfo.name : formData['Danh mục'];
+  
+  // Build category data
+  var categoryData = {
+    id: formData['Danh mục'],
+    name: categoryName
+  };
+  
+  var displayName = categoryName;
+  
+  if (subcategoryId) {
+    var subcategorySelect = document.getElementById('budgetSubcategory');
+    var subcategoryName = '';
+    
+    if (subcategorySelect) {
+      var selectedOption = subcategorySelect.options[subcategorySelect.selectedIndex];
+      if (selectedOption) {
+        subcategoryName = selectedOption.text.replace('├─ ', '').trim();
+      }
+    }
+    
+    categoryData.subcategory = subcategoryName;
+    categoryData.subcategoryId = subcategoryId;
+    displayName += ' - ' + subcategoryName;
+  }
+  
+  // Build record data
+  var recordData = {
+    'ID': id || generateId('NS'),
+    'UserID': currentUser.userId,
+    'Tháng': formData['Tháng'],
+    'Danh mục ID': JSON.stringify([categoryData]),
+    'Kế hoạch': formData['Kế hoạch'],
+    'Chi tiêu': 0,
+    'Chênh lệch': 0,
+    'Metadata': JSON.stringify({
+      categoryName: displayName,
+      remaining: formData['Kế hoạch'],
+      percentage: 0,
+      status: 'on-track',
+      alerts: [],
+      history: []
+    })
+  };
+  
+  console.log('💾 Record data:', recordData);
+  
+  closeModal();
+  showLoading('Đang lưu...');
+  
+  try {
+    // Optimistic update
+    if (id) {
+      DataManager.updateRecord('Ngân sách', id, recordData);
+    } else {
+      DataManager.addRecord('Ngân sách', recordData);
+    }
+    
+    // Update UI immediately
+    allBudgetData = DataManager.getBudget();
+    budgetFilteredData = allBudgetData.slice();
+    renderBudgetPage();
+    
+    // Save to server with retry
+    var action = id ? 'updateRecord' : 'createRecord';
+    var params = id ? 
+      {sheetName: 'Ngân sách', id: id, data: recordData} : 
+      {sheetName: 'Ngân sách', data: recordData};
+    
+    const response = await ErrorHandler.callWithRetry(action, params);
+    
+    if (response.success) {
+      console.log('✅ Server save successful');
+      
+      // Auto-calculate spent amount
+      try {
+        const calcResponse = await ErrorHandler.callWithRetry('calculateBudgetSpent', {
+          budgetId: recordData.ID,
+          month: formData['Tháng']
+        });
+        
+        if (calcResponse.success) {
+          console.log('✅ Budget spent calculated:', calcResponse.spent);
+          
+          // Refresh budget data
+          await DataManager.refresh('Ngân sách');
+          allBudgetData = DataManager.getBudget();
+          budgetFilteredData = allBudgetData.slice();
+          renderBudgetPage();
+          
+          hideLoading();
+          showToast('✅ Đã lưu ngân sách và cập nhật chi tiêu: ' + 
+            formatCurrency(calcResponse.spent) + ' đ', 'success');
+        }
+      } catch (calcError) {
+        console.error('⚠️ Calculate spent failed:', calcError);
+        hideLoading();
+        showToast('✅ Đã lưu ngân sách!', 'success');
+      }
+      
+    } else {
+      throw new Error(response.message || 'Save failed');
+    }
+    
+  } catch (error) {
+    console.error('❌ Save error:', error);
+    
+    // Rollback
+    await DataManager.refresh('Ngân sách');
+    allBudgetData = DataManager.getBudget();
+    budgetFilteredData = allBudgetData.slice();
+    renderBudgetPage();
+    
+    hideLoading();
+  }
+}
+
+function editBudget(id) {
+  openBudgetModal(id);
+}
+
+function confirmDeleteBudget(id) {
+  var body = '<p style="text-align: center; font-size: 16px; margin: 20px 0;">Bạn có chắc chắn muốn xóa ngân sách này?</p>' +
+    '<p style="text-align: center; color: #e94849; font-weight: 500;">Hành động này không thể hoàn tác!</p>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-danger" onclick="executeDeleteBudget(\'' + id + '\')">Xóa</button>';
+  
+  openModal('Xác nhận xóa', body, footer);
+}
+
+function executeDeleteBudget(id) {
+  closeModal();
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response.success) {
+        reloadBudgetData();
+      } else {
+        hideLoading();
+        showToast(response.message, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .handleRequest('deleteRecord', {sheetName: 'Ngân sách', id: id});
+}
+
+function reloadBudgetData() {
+  showLoading();
+  
+  loadSheetData('Ngân sách').then(function(data) {
+    allBudgetData = data;
+    hideLoading();
+    renderBudgetPage();
+    showToast('Dữ liệu đã được cập nhật', 'success');
+  }).catch(function(error) {
+    hideLoading();
+    console.error('Reload error:', error);
+    showToast('Lỗi tải dữ liệu', 'error');
+  });
+}
+
+// ========== UPDATE BUDGETS ==========
+function updateCurrentMonthBudgets() {
+  var currentMonth = new Date().toISOString().substring(0, 7);
+  
+  console.log('Updating budgets for month:', currentMonth);
+  
+  showLoading('Đang cập nhật ngân sách...');
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      console.log('Update budgets response:', response);
+      
+      hideLoading();
+      
+      if (response.success) {
+        showToast('✅ ' + response.message + ' (' + response.updated + ' ngân sách)', 'success');
+        
+        // Reload data
+        loadSheetData('Ngân sách').then(function(data) {
+          console.log('Reloaded budget data:', data);
+          allBudgetData = data || [];
+          budgetFilteredData = allBudgetData.slice();
+          renderBudgetPage();
+        });
+      } else {
+        showToast(response.message || 'Cập nhật thất bại', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      console.error('Update budgets error:', error);
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .handleRequest('updateAllBudgets', {month: currentMonth});
+}
+
+// ========== EXCEL TEMPLATE ==========
+function downloadBudgetTemplate() {
+  var wb = XLSX.utils.book_new();
+  
+  var wsData = [
+    ['Tháng', 'Danh mục', 'Danh mục con', 'Kế hoạch', 'Chi tiêu'],
+    ['2025-10', 'food', 'Ăn sáng', 5000000, 3000000],
+    ['2025-10', 'transport', 'Xăng xe', 2000000, 1500000],
+    ['2025-10', 'shopping', 'Quần áo', 3000000, 0]
+  ];
+  
+  var ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = [
+    { wch: 12 },  // Tháng
+    { wch: 15 },  // Danh mục
+    { wch: 15 },  // Danh mục con
+    { wch: 15 },  // Kế hoạch
+    { wch: 15 }   // Chi tiêu
+  ];
+  
+  XLSX.utils.book_append_sheet(wb, ws, 'Budget_Template');
+  
+  var wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  var blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  
+  var link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'Budget_Template.xlsx';
+  link.click();
+  
+  showToast('Đã tải xuống file mẫu Excel', 'success');
+}
+
+// ========== IMPORT EXCEL ==========
+function openBudgetImportModal() {
+  var body = '<div class="form-group">' +
+    '<label>Chọn file Excel/CSV</label>' +
+    '<input type="file" id="budgetImportFile" accept=".xlsx,.xls,.csv" class="form-control">' +
+    '<small style="color: #718096; margin-top: 5px; display: block;">Định dạng: XLSX, XLS, CSV</small>' +
+    '<small style="color: #718096; margin-top: 5px; display: block;">Cấu trúc: Tháng | Danh mục | Kế hoạch</small>' +
+    '<div style="margin-top: 10px; padding: 10px; background: #fffbeb; border-left: 3px solid #f59e0b; border-radius: 4px;">' +
+    '<strong>Lưu ý:</strong><br>' +
+    '<ul style="margin: 5px 0; padding-left: 20px; font-size: 13px;">' +
+    '<li>Tháng: Định dạng YYYY-MM (VD: 2025-10)</li>' +
+    '<li>Danh mục: food, transport, shopping, education, health, entertainment, other</li>' +
+    '<li>Kế hoạch: Số nguyên (VD: 5000000)</li>' +
+    '</ul>' +
+    '</div>' +
+    '</div>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-primary" onclick="processBudgetImport()">Import</button>';
+  
+  openModal('Import dữ liệu Ngân sách', body, footer);
+}
+
+function processBudgetImport() {
+  var fileInput = document.getElementById('budgetImportFile');
+  
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    showToast('Vui lòng chọn file', 'error');
+    return;
+  }
+  
+  var file = fileInput.files[0];
+  var reader = new FileReader();
+  
+  closeModal();
+  showLoading();
+  
+  reader.onload = function(e) {
+    try {
+      var data = new Uint8Array(e.target.result);
+      var workbook = XLSX.read(data, { type: 'array' });
+      var firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      var jsonData = XLSX.utils.sheet_to_json(firstSheet);
+      
+      if (jsonData.length === 0) {
+        hideLoading();
+        showToast('File không có dữ liệu', 'error');
+        return;
+      }
+      
+      var successCount = 0;
+      var errorCount = 0;
+      
+      function processRow(index) {
+        if (index >= jsonData.length) {
+          hideLoading();
+          
+          if (successCount > 0) {
+          showToast('Import thành công ' + successCount + ' / ' + jsonData.length + ' bản ghi', 'success');
+          
+          console.log('Reloading budget data after import...');
+          
+          // Force full reload
+          setTimeout(function() {
+            showLoading();
+            
+            loadSheetData('Ngân sách').then(function(data) {
+              console.log('✅ Budget data after import:', data);
+              console.log('Records count:', data ? data.length : 0);
+              
+              if (!data || data.length === 0) {
+                console.warn('⚠️ No data returned after import');
+              }
+              
+              allBudgetData = data || [];
+              budgetFilteredData = allBudgetData.slice();
+              budgetCurrentPage = 1;
+              
+              hideLoading();
+              renderBudgetPage();
+              
+              console.log('✅ Budget page rendered after import');
+              console.log('budgetFilteredData:', budgetFilteredData.length);
+            }).catch(function(error) {
+              console.error('❌ Reload error after import:', error);
+              hideLoading();
+              showToast('Lỗi tải dữ liệu', 'error');
+            });
+          }, 2000); // Tăng lên 2s
+          } else {
+            showToast('Không có bản ghi nào được import', 'error');
+          }
+          
+          if (errorCount > 0) {
+            showToast('Có ' + errorCount + ' lỗi', 'error');
+          }
+          
+          return;
+        }
+        
+        var row = jsonData[index];
+
+        console.log('Processing row', index, ':', row);
+
+        // Validate required fields
+        if (!row['Tháng'] || !row['Danh mục']) {
+          console.error('Row', index, 'missing Tháng or Danh mục');
+          errorCount++;
+          processRow(index + 1);
+          return;
+        }
+
+        // Set default values
+        var planned = parseFloat(row['Kế hoạch']) || 0;
+        var spent = parseFloat(row['Chi tiêu']) || 0;
+        var subcategory = row['Danh mục con'] || '';
+
+        if (planned <= 0) {
+          console.error('Row', index, 'invalid Kế hoạch:', planned);
+          errorCount++;
+          processRow(index + 1);
+          return;
+        }
+
+        var remaining = planned - spent;
+        var percentage = planned > 0 ? Math.round((spent / planned) * 100) : 0;
+        var ratio = planned > 0 ? spent / planned : 0;
+
+        var status = 'on-track';
+        var alerts = [];
+
+        if (percentage >= 100) {
+          status = 'exceeded';
+          alerts.push('Đã vượt ngân sách');
+        } else if (percentage >= 90) {
+          status = 'warning';
+          alerts.push('Sắp vượt ngân sách');
+        }
+
+        var categoryName = getCategoryLabel(row['Danh mục']);
+        if (subcategory) {
+          categoryName += ' - ' + subcategory;
+        }
+
+        var recordData = {
+          'ID': generateId('NS'),
+          'UserID': currentUser.userId,
+          'Tháng': row['Tháng'],
+          'Danh mục ID': JSON.stringify([{
+            id: row['Danh mục'], 
+            name: getCategoryLabel(row['Danh mục']),
+            subcategory: subcategory
+          }]),
+          'Kế hoạch': planned,
+          'Chi tiêu': spent,
+          'Chênh lệch': ratio,
+          'Metadata': JSON.stringify({
+            categoryName: categoryName,
+            remaining: remaining,
+            percentage: percentage,
+            status: status,
+            alerts: alerts,
+            history: []
+          })
+        };
+
+        console.log('Record data:', recordData);
+        
+        var recordData = {
+          'ID': generateId('NS'),
+          'UserID': currentUser.userId,
+          'Tháng': row['Tháng'],
+          'Danh mục ID': JSON.stringify([{
+            id: row['Danh mục'], 
+            name: getCategoryLabel(row['Danh mục'])
+          }]),
+          'Kế hoạch': parseFloat(row['Kế hoạch']),
+          'Chi tiêu': 0,
+          'Chênh lệch': 0,
+          'Metadata': JSON.stringify({
+            categoryName: getCategoryLabel(row['Danh mục']),
+            remaining: parseFloat(row['Kế hoạch']),
+            percentage: 0,
+            status: 'on-track',
+            alerts: [],
+            history: []
+          })
+        };
+        
+        google.script.run
+          .withSuccessHandler(function(response) {
+            if (response.success) {
+              successCount++;
+            } else {
+              errorCount++;
+            }
+            processRow(index + 1);
+          })
+          .withFailureHandler(function(error) {
+            errorCount++;
+            processRow(index + 1);
+          })
+          .handleRequest('createRecord', {
+            sheetName: 'Ngân sách',
+            data: recordData
+          });
+      }
+      
+      processRow(0);
+      
+    } catch (error) {
+      hideLoading();
+      showToast('Lỗi đọc file: ' + error.message, 'error');
+    }
+  };
+  
+  reader.onerror = function() {
+    hideLoading();
+    showToast('Lỗi đọc file', 'error');
+  };
+  
+  reader.readAsArrayBuffer(file);
+}
+
+function calculateBudgetSpent(budgetId, month) {
+  try {
+    Logger.log('=== calculateBudgetSpent START ===');
+    Logger.log('BudgetID: ' + budgetId);
+    Logger.log('Month: ' + month);
+    
+    var budgetSheet = getSheet(CONFIG.SHEET_NAMES.BUDGET);
+    var expenseSheet = getSheet(CONFIG.SHEET_NAMES.EXPENSE);
+    
+    if (!budgetSheet || !expenseSheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    // Get budget info
+    var budgetData = budgetSheet.getDataRange().getValues();
+    var budgetRow = -1;
+    var budgetCategoryId = '';
+    var budgetSubcategoryName = '';
+    
+    Logger.log('Searching for budget ID: ' + budgetId);
+    Logger.log('Total budget rows: ' + budgetData.length);
+    
+    for (var i = 1; i < budgetData.length; i++) {
+      if (budgetData[i][0] === budgetId) {
+        budgetRow = i;
+        
+        Logger.log('✓ Budget found at row: ' + (i + 1));
+        Logger.log('Budget category column value: ' + budgetData[i][3]);
+        
+        // Parse category
+        try {
+          var catJson = typeof budgetData[i][3] === 'string' ? 
+            JSON.parse(budgetData[i][3]) : budgetData[i][3];
+          
+          Logger.log('Parsed category JSON: ' + JSON.stringify(catJson));
+          
+          if (catJson && catJson[0]) {
+            budgetCategoryId = catJson[0].id || '';
+            budgetSubcategoryName = catJson[0].subcategory || '';
+            
+            Logger.log('Budget CategoryID: ' + budgetCategoryId);
+            Logger.log('Budget Subcategory: ' + budgetSubcategoryName);
+          } else {
+            Logger.log('⚠️ catJson is empty or invalid');
+          }
+        } catch(e) {
+          Logger.log('❌ Error parsing budget category: ' + e.toString());
+        }
+        break;
+      }
+    }
+    
+    if (budgetRow < 0) {
+      Logger.log('❌ Budget not found');
+      return { success: false, message: 'Không tìm thấy ngân sách' };
+    }
+    
+    // Calculate total spent from Expense sheet
+    var expenseData = expenseSheet.getDataRange().getValues();
+    var totalSpent = 0;
+    var matchedCount = 0;
+    
+    Logger.log('--- Checking expenses ---');
+    Logger.log('Total expense rows: ' + (expenseData.length - 1));
+    
+    for (var i = 1; i < expenseData.length; i++) {
+      var expenseDate = expenseData[i][1];
+      var expenseAmount = parseFloat(expenseData[i][3]) || 0;
+      var expenseCategoryRaw = expenseData[i][2];
+      
+      // Check month
+      var expenseMonth = '';
+      if (expenseDate instanceof Date) {
+        expenseMonth = expenseDate.getFullYear() + '-' + 
+          String(expenseDate.getMonth() + 1).padStart(2, '0');
+      } else if (typeof expenseDate === 'string') {
+        if (expenseDate.indexOf('-') > -1) {
+          expenseMonth = expenseDate.substring(0, 7);
+        }
+      }
+      
+      if (expenseMonth !== month) {
+        continue; // Skip wrong month
+      }
+
+function updateAllBudgets(month) {
+  try {
+    Logger.log('=== UPDATE ALL BUDGETS ===');
+    Logger.log('Month: ' + month);
+    
+    var sheet = getSheet(CONFIG.SHEET_NAMES.BUDGET);
+    if (!sheet) {
+      return { success: false, message: 'Sheet không tồn tại' };
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    Logger.log('Total budget rows: ' + data.length);
+    
+    var monthsToUpdate = [];
+    var budgetsToUpdate = [];
+    
+    // Find all budgets for this month
+    for (var i = 1; i < data.length; i++) {
+      var budgetId = data[i][0];
+      var budgetMonth = data[i][2];
+      
+      // Normalize month format
+      if (typeof budgetMonth === 'string' && budgetMonth.length > 7) {
+        budgetMonth = budgetMonth.substring(0, 7);
+      }
+      
+      Logger.log('Budget #' + (i + 1) + ': ID=' + budgetId + ', Month=' + budgetMonth);
+      
+      if (budgetMonth === month) {
+        monthsToUpdate.push(budgetMonth);
+        budgetsToUpdate.push({ id: budgetId, month: budgetMonth, row: i });
+        Logger.log('✓ Will update budget: ' + budgetId);
+      }
+    }
+    
+    Logger.log('');
+    Logger.log('Found ' + budgetsToUpdate.length + ' budgets to update');
+    
+    if (budgetsToUpdate.length === 0) {
+      Logger.log('⚠️ No budgets found for month: ' + month);
+      return {
+        success: true,
+        message: 'Không tìm thấy ngân sách cho tháng ' + month,
+        updated: 0,
+        errors: 0
+      };
+    }
+    
+    var updated = 0;
+    var errors = 0;
+    
+    // Update each budget
+    for (var i = 0; i < budgetsToUpdate.length; i++) {
+      var budget = budgetsToUpdate[i];
+      
+      Logger.log('');
+      Logger.log('=== Updating budget ' + (i + 1) + '/' + budgetsToUpdate.length + ' ===');
+      
+      var result = calculateBudgetSpent(budget.id, budget.month);
+      
+      if (result.success) {
+        updated++;
+        Logger.log('✓ Updated: ' + budget.id + ', Spent: ' + result.spent);
+      } else {
+        errors++;
+        Logger.log('✗ Failed: ' + budget.id + ', Error: ' + result.message);
+      }
+    }
+    
+    Logger.log('');
+    Logger.log('=== UPDATE COMPLETE ===');
+    Logger.log('Success: ' + updated);
+    Logger.log('Errors: ' + errors);
+    
+    return {
+      success: true,
+      message: 'Đã cập nhật ' + updated + ' ngân sách',
+      updated: updated,
+      errors: errors
+    };
+    
+  } catch (error) {
+    Logger.log('❌ ERROR in updateAllBudgets: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+      
+      // ===== LOG CHI TIẾT TỪNG EXPENSE =====
+      Logger.log('');
+      Logger.log('--- Expense #' + (i + 1) + ' ---');
+      Logger.log('Date: ' + expenseDate + ' → Month: ' + expenseMonth);
+      Logger.log('Amount: ' + expenseAmount);
+      Logger.log('Category raw: ' + expenseCategoryRaw);
+      
+      // Check category match
+      try {
+        var expenseCat = typeof expenseCategoryRaw === 'string' ? 
+          JSON.parse(expenseCategoryRaw) : expenseCategoryRaw;
+        
+        Logger.log('Parsed expense category: ' + JSON.stringify(expenseCat));
+        
+        if (expenseCat && expenseCat[0]) {
+          var expenseCategoryId = expenseCat[0].id || '';
+          var expenseSubcategoryName = expenseCat[0].subcategory || '';
+          
+          Logger.log('Expense CategoryID: "' + expenseCategoryId + '"');
+          Logger.log('Expense Subcategory: "' + expenseSubcategoryName + '"');
+          Logger.log('Budget CategoryID: "' + budgetCategoryId + '"');
+          Logger.log('Budget Subcategory: "' + budgetSubcategoryName + '"');
+          
+          // ===== MATCHING LOGIC =====
+          var isMatch = false;
+          
+          if (budgetSubcategoryName) {
+            // Budget có subcategory → match cả main + sub
+            isMatch = (expenseCategoryId === budgetCategoryId) && 
+                      (expenseSubcategoryName === budgetSubcategoryName);
+            Logger.log('Match type: Main + Sub');
+          } else {
+            // Budget chỉ có main category → match main category only
+            isMatch = (expenseCategoryId === budgetCategoryId);
+            Logger.log('Match type: Main only');
+          }
+          
+          Logger.log('Is Match: ' + isMatch);
+          
+          if (isMatch) {
+            totalSpent += expenseAmount;
+            matchedCount++;
+            Logger.log('✓ MATCHED! Total spent now: ' + totalSpent);
+          } else {
+            Logger.log('✗ NOT MATCHED');
+          }
+        } else {
+          Logger.log('⚠️ expenseCat is empty or invalid');
+        }
+      } catch(e) {
+        Logger.log('❌ Error parsing expense category: ' + e.toString());
+      }
+    }
+    
+    Logger.log('');
+    Logger.log('=== FINAL RESULT ===');
+    Logger.log('Total matched expenses: ' + matchedCount);
+    Logger.log('Total spent: ' + totalSpent);
+    
+    // Update budget
+    var planned = parseFloat(budgetData[budgetRow][4]) || 0;
+    var remaining = planned - totalSpent;
+    var percentage = planned > 0 ? Math.round((totalSpent / planned) * 100) : 0;
+    var ratio = planned > 0 ? totalSpent / planned : 0;
+    
+    Logger.log('Planned: ' + planned);
+    Logger.log('Remaining: ' + remaining);
+    Logger.log('Percentage: ' + percentage + '%');
+    
+    var status = 'on-track';
+    var alerts = [];
+    
+    if (percentage >= 100) {
+      status = 'exceeded';
+      alerts.push('Đã vượt ngân sách');
+    } else if (percentage >= 90) {
+      status = 'warning';
+      alerts.push('Sắp vượt ngân sách');
+    }
+    
+    // Update sheet
+    budgetSheet.getRange(budgetRow + 1, 6).setValue(totalSpent);
+    budgetSheet.getRange(budgetRow + 1, 7).setValue(ratio);
+    
+    var metadata = {
+      categoryName: budgetData[budgetRow][3],
+      remaining: remaining,
+      percentage: percentage,
+      status: status,
+      alerts: alerts,
+      lastUpdated: new Date().toISOString(),
+      matchedExpenses: matchedCount
+    };
+    
+    budgetSheet.getRange(budgetRow + 1, 8).setValue(JSON.stringify(metadata));
+    
+    Logger.log('✅ Budget updated successfully');
+    
+    return {
+      success: true,
+      spent: totalSpent,
+      planned: planned,
+      remaining: remaining,
+      percentage: percentage,
+      status: status,
+      matchedCount: matchedCount
+    };
+    
+  } catch (error) {
+    Logger.log('❌ ERROR: ' + error.toString());
+    Logger.log('Stack: ' + error.stack);
+    return { success: false, message: error.toString() };
+  }
+}
+
+
+
+// Test Budget Page
+(async function testBudgetPage() {
+  console.log('=== Testing Budget Page ===');
+  
+  if (!DataManager.isInitialized()) {
+    await DataManager.initialize();
+    syncLegacyVariables();
+  }
+  
+  showBudgetPage();
+  
+  setTimeout(() => {
+    // Check budget table rendered
+    var table = document.querySelector('.budget-table table');
+    console.assert(table !== null, 'Budget table should exist');
+    
+    // Check sticky column
+    var stickyCol = document.querySelector('.sticky-column');
+    console.assert(stickyCol !== null, 'Sticky column should exist');
+    
+    console.log('✅ Budget page tests passed');
+  }, 500);
+})();
+</script>
