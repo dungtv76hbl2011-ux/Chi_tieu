@@ -1,1 +1,18 @@
+<script>
 
+// ========== INITIALIZATION ==========
+window.onload = function() {
+  console.log('App initialized');
+  
+  var loginForm = document.getElementById('loginForm');
+  if (loginForm) {
+    loginForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+      handleLogin();
+    });
+  }
+  
+  initNavigation();
+};
+
+</script>
