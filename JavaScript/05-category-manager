@@ -1,1 +1,168 @@
+<script>
 
+// CATEGORY MANAGER - INSTANT CATEGORY OPERATIONS
+// ========================================
+
+const CategoryManager = (function() {
+  'use strict';
+  
+  // ========== LOAD SUBCATEGORIES (WITH CACHE) ==========
+  
+  const subcategoryCache = {}; // { parentId: [subcategories] }
+  
+  async function loadSubcategories(parentId, forceRefresh = false) {
+    console.log('📥 Loading subcategories for:', parentId);
+    
+    // Check cache first
+    if (!forceRefresh && subcategoryCache[parentId]) {
+      console.log('✅ Found in cache:', subcategoryCache[parentId].length, 'items');
+      return subcategoryCache[parentId];
+    }
+    
+    return new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(response => {
+          if (response.success) {
+            const subcats = response.data || [];
+            subcategoryCache[parentId] = subcats;
+            console.log('✅ Loaded and cached:', subcats.length, 'subcategories');
+            resolve(subcats);
+          } else {
+            console.error('❌ Load subcategories failed:', response.message);
+            resolve([]);
+          }
+        })
+        .withFailureHandler(error => {
+          console.error('❌ Error:', error);
+          reject(error);
+        })
+        .handleRequest('getSubcategories', { 
+          parentId: parentId,
+          userId: getCurrentUserId() 
+        });
+    });
+  }
+  
+  // ========== CLEAR CACHE ==========
+  
+  function clearCache(parentId = null) {
+    if (parentId) {
+      delete subcategoryCache[parentId];
+      console.log('🗑️ Cleared cache for:', parentId);
+    } else {
+      Object.keys(subcategoryCache).forEach(key => {
+        delete subcategoryCache[key];
+      });
+      console.log('🗑️ Cleared all subcategory cache');
+    }
+  }
+  
+  // ========== FORMAT CATEGORY FOR DISPLAY ==========
+  
+function formatCategoryDisplay(categoryData) {
+  return CategoryManager.formatCategoryDisplay(categoryData);
+}
+
+function renderCategoryOptions(categories, selectedId) {
+  return CategoryManager.renderCategoryOptions(categories, selectedId);
+}
+
+function renderSubcategoryOptions(subcategories, selectedId) {
+  return CategoryManager.renderSubcategoryOptions(subcategories, selectedId);
+}
+  
+  // ========== RENDER OPTIONS ==========
+  
+  function renderCategoryOptions(categories, selectedId) {
+    var html = '<option value="">-- Chọn danh mục --</option>';
+    
+    for (var i = 0; i < categories.length; i++) {
+      var cat = categories[i];
+      var selected = cat.id === selectedId ? ' selected' : '';
+      var icon = cat.icon ? cat.icon + ' ' : '';
+      
+      html += '<option value="' + cat.id + '"' + selected + '>' + 
+              icon + cat.name + 
+              '</option>';
+    }
+    
+    return html;
+  }
+  
+  function renderSubcategoryOptions(subcategories, selectedId) {
+    var html = '<option value="">-- Không chọn danh mục con --</option>';
+    
+    for (var i = 0; i < subcategories.length; i++) {
+      var subcat = subcategories[i];
+      var selected = subcat.id === selectedId ? ' selected' : '';
+      
+      html += '<option value="' + subcat.id + '"' + selected + '>├─ ' + 
+              subcat.name + 
+              '</option>';
+    }
+    
+    return html;
+  }
+  
+  // ========== GET CATEGORY ICON & COLOR ==========
+  
+  function getCategoryIcon(categoryId) {
+    const cat = DataManager.getCategoryById(categoryId);
+    return cat ? cat.icon : '';
+  }
+  
+  function getCategoryColor(categoryId) {
+    const cat = DataManager.getCategoryById(categoryId);
+    return cat ? cat.color : '#6b7280';
+  }
+  
+  function getCategoryName(categoryId) {
+    const cat = DataManager.getCategoryById(categoryId);
+    return cat ? cat.name : categoryId;
+  }
+  
+  // ========== PUBLIC API ==========
+  
+  return {
+    loadSubcategories,
+    clearCache,
+    formatCategoryDisplay,
+    renderCategoryOptions,
+    renderSubcategoryOptions,
+    getCategoryIcon,
+    getCategoryColor,
+    getCategoryName
+  };
+})();
+
+// Test CategoryManager
+(async function testCategoryManager() {
+  console.log('=== Testing CategoryManager ===');
+  
+  // Ensure DataManager is initialized
+  if (!DataManager.isInitialized()) {
+    await DataManager.initialize();
+  }
+  
+  // Test 1: Get expense categories
+  var expenseCategories = DataManager.getCategories('expense');
+  console.assert(expenseCategories.length > 0, 'Should have expense categories');
+  
+  // Test 2: Render options
+  var html = CategoryManager.renderCategoryOptions(expenseCategories, null);
+  console.assert(html.includes('<option'), 'Should have option tags');
+  console.log('✓ Render category options:', html.length, 'chars');
+  
+  // Test 3: Get category details
+  if (expenseCategories.length > 0) {
+    var firstCat = expenseCategories[0];
+    var icon = CategoryManager.getCategoryIcon(firstCat.id);
+    var color = CategoryManager.getCategoryColor(firstCat.id);
+    var name = CategoryManager.getCategoryName(firstCat.id);
+    console.log('✓ Category details:', name, icon, color);
+  }
+  
+  console.log('✅ CategoryManager tests passed');
+})();
+
+</script>
