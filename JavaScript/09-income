@@ -1,1 +1,1049 @@
+<script>
 
+function showIncomePage() {
+  console.log('=== SHOWING INCOME PAGE ===');
+  
+  // Reset về trang 1 khi mở page
+  incomeCurrentPage = 1;
+  incomeFilteredData = allIncomeData.slice();
+  
+  renderIncomePage();
+}
+
+function renderIncomePage() {
+  console.log('=== RENDERING INCOME PAGE (CACHED) ===');
+  
+  // Use cached data
+  if (!incomeFilteredData.length) {
+    incomeFilteredData = DataManager.getIncome();
+  }
+  // Apply filters
+  applyIncomeFilters();
+  
+  var totalRecords = incomeFilteredData.length;
+  var totalPages = Math.ceil(totalRecords / incomeItemsPerPage);
+  
+  if (incomeCurrentPage > totalPages && totalPages > 0) {
+    incomeCurrentPage = totalPages;
+  }
+  
+  if (incomeCurrentPage < 1) {
+    incomeCurrentPage = 1;
+  }
+  
+  var html = '<div class="card">' +
+    '<div class="card-header">' +
+    '<h2 class="card-title">Danh sách Thu nhập</h2>' +
+    '<div style="display: flex; gap: 10px;">' +
+    '<button class="btn-secondary" onclick="downloadIncomeTemplate()"><i class="fas fa-download"></i> Tải mẫu Excel</button>' +
+    '<button class="btn-secondary" onclick="openIncomeImportModal()"><i class="fas fa-file-import"></i> Import Excel</button>' +
+    '<button class="btn-primary" onclick="openIncomeModal()"><i class="fas fa-plus"></i> Thêm thu nhập</button>' +
+    '</div>' +
+    '</div>' +
+    
+    // FILTER PANEL
+    '<div style="background: #f7fafc; padding: 15px; border-radius: 8px; margin-bottom: 15px;">' +
+    '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">' +
+    '<div><label style="display: block; margin-bottom: 5px; font-size: 13px; color: #4a5568;">Từ ngày</label>' +
+    '<input type="date" id="incomeFilterFromDate" class="form-control" value="' + incomeFilters.fromDate + '" onchange="renderIncomePage()"></div>' +
+    '<div><label style="display: block; margin-bottom: 5px; font-size: 13px; color: #4a5568;">Đến ngày</label>' +
+    '<input type="date" id="incomeFilterToDate" class="form-control" value="' + incomeFilters.toDate + '" onchange="renderIncomePage()"></div>' +
+    '<div><label style="display: block; margin-bottom: 5px; font-size: 13px; color: #4a5568;">Danh mục</label>' +
+    '<select id="incomeFilterCategory" class="form-control" onchange="renderIncomePage()"><option value="">Tất cả</option>' +
+    '<option value="salary">Lương</option><option value="bonus">Thưởng</option>' +
+    '<option value="investment">Đầu tư</option><option value="freelance">Freelance</option><option value="other">Khác</option></select></div>' +
+    '<div><label style="display: block; margin-bottom: 5px; font-size: 13px; color: #4a5568;">Tài khoản</label>' +
+    '<select id="incomeFilterAccount" class="form-control" onchange="renderIncomePage()"><option value="">Tất cả</option>' + 
+    renderAccountOptionsForFilter() + '</select></div>' +
+    '<div style="display: flex; align-items: flex-end;"><button class="btn-secondary" onclick="clearIncomeFilters()" style="width: 100%;">Xóa bộ lọc</button></div>' +
+    '</div></div>' +
+        
+    '<div style="margin-bottom: 10px; color: #718096; display: flex; justify-content: space-between; align-items: center;">' +
+    '<span>Hiển thị ' + ((incomeCurrentPage - 1) * incomeItemsPerPage + 1) + ' - ' + 
+    Math.min(incomeCurrentPage * incomeItemsPerPage, totalRecords) + ' trong tổng số ' + totalRecords + ' bản ghi</span>' +
+    '<div style="display: flex; gap: 10px; align-items: center;">' +
+    '<label style="margin: 0;">Hiển thị:</label>' +
+    '<select onchange="changeIncomeItemsPerPage(this.value)" class="form-control" style="width: auto; padding: 5px 10px;">' +
+    '<option value="5"' + (incomeItemsPerPage === 5 ? ' selected' : '') + '>5</option>' +
+    '<option value="10"' + (incomeItemsPerPage === 10 ? ' selected' : '') + '>10</option>' +
+    '<option value="20"' + (incomeItemsPerPage === 20 ? ' selected' : '') + '>20</option>' +
+    '<option value="50"' + (incomeItemsPerPage === 50 ? ' selected' : '') + '>50</option>' +
+    '</select>' +
+    '</div></div>' +
+    
+    '<div style="overflow: auto; max-height: calc(100vh - 400px); position: relative;">' +
+    '<table>' +
+    '<thead>' +
+    '<tr>' +
+    '<th class="sticky-column">Ngày</th>' +
+    '<th>Danh mục</th>' +
+    '<th>Số tiền</th>' +
+    '<th>Mô tả</th>' +
+    '<th>Tài khoản</th>' +
+    '<th>Hành động</th>' +
+    '</tr>' +
+    '</thead>' +
+    '<tbody>' + renderIncomeTableWithPagination() + '</tbody>' +
+    '</table></div>' +
+    
+    // PAGINATION
+    renderIncomePagination(totalPages) +
+    
+    '</div>';
+  
+  document.getElementById('contentWrapper').innerHTML = html;
+  
+  // Restore filter values
+  var fromDateEl = document.getElementById('incomeFilterFromDate');
+  var toDateEl = document.getElementById('incomeFilterToDate');
+  var categoryEl = document.getElementById('incomeFilterCategory');
+  var accountEl = document.getElementById('incomeFilterAccount');
+  
+  if (fromDateEl) fromDateEl.value = incomeFilters.fromDate;
+  if (toDateEl) toDateEl.value = incomeFilters.toDate;
+  if (categoryEl) categoryEl.value = incomeFilters.category;
+  if (accountEl) accountEl.value = incomeFilters.accountId;
+}
+
+function applyIncomeFilters() {
+  // Đọc giá trị filter từ input
+  var fromDateEl = document.getElementById('incomeFilterFromDate');
+  var toDateEl = document.getElementById('incomeFilterToDate');
+  var categoryEl = document.getElementById('incomeFilterCategory');
+  var accountEl = document.getElementById('incomeFilterAccount');
+  
+  if (fromDateEl) incomeFilters.fromDate = fromDateEl.value;
+  if (toDateEl) incomeFilters.toDate = toDateEl.value;
+  if (categoryEl) incomeFilters.category = categoryEl.value;
+  if (accountEl) incomeFilters.accountId = accountEl.value;
+  
+  // Filter data
+  incomeFilteredData = [];
+  
+  for (var i = 0; i < allIncomeData.length; i++) {
+    var item = allIncomeData[i];
+    var itemDate = item['Ngày'];
+    
+    // Filter by date range
+    if (incomeFilters.fromDate && itemDate < incomeFilters.fromDate) continue;
+    if (incomeFilters.toDate && itemDate > incomeFilters.toDate) continue;
+    
+    // Filter by category
+    if (incomeFilters.category) {
+      try {
+        var cat = typeof item['Danh mục thu nhập'] === 'string' ? 
+          JSON.parse(item['Danh mục thu nhập']) : item['Danh mục thu nhập'];
+        if (!cat || !cat[0] || cat[0].id !== incomeFilters.category) continue;
+      } catch(e) {
+        continue;
+      }
+    }
+    
+    // Filter by account
+    if (incomeFilters.accountId) {
+      try {
+        var meta = typeof item.Metadata === 'string' ? JSON.parse(item.Metadata) : item.Metadata;
+        if (!meta || meta.accountId !== incomeFilters.accountId) continue;
+      } catch(e) {
+        continue;
+      }
+    }
+    
+    incomeFilteredData.push(item);
+  }
+}
+
+function clearIncomeFilters() {
+  console.log('=== CLEARING INCOME FILTERS ===');
+  
+  // Reset filter values
+  incomeFilters = { 
+    fromDate: '', 
+    toDate: '', 
+    category: '', 
+    accountId: '' 
+  };
+  
+  // Reset to page 1
+  incomeCurrentPage = 1;
+  
+  // Reset filtered data to all data
+  incomeFilteredData = allIncomeData.slice();
+  
+  console.log('Filters cleared, rendering page...');
+  
+  // Re-render page
+  renderIncomePage();
+  
+  // Force clear input values after render
+  setTimeout(function() {
+    var fromDateEl = document.getElementById('incomeFilterFromDate');
+    var toDateEl = document.getElementById('incomeFilterToDate');
+    var categoryEl = document.getElementById('incomeFilterCategory');
+    var accountEl = document.getElementById('incomeFilterAccount');
+    
+    if (fromDateEl) fromDateEl.value = '';
+    if (toDateEl) toDateEl.value = '';
+    if (categoryEl) categoryEl.value = '';
+    if (accountEl) accountEl.value = '';
+    
+    console.log('Input values cleared');
+  }, 100);
+}
+
+function changeIncomeItemsPerPage(value) {
+  incomeItemsPerPage = parseInt(value);
+  incomeCurrentPage = 1;
+  renderIncomePage();
+}
+
+function renderIncomeTableWithPagination() {
+  if (!incomeFilteredData || incomeFilteredData.length === 0) {
+    return '<tr><td colspan="6" class="text-center">Chưa có dữ liệu</td></tr>';
+  }
+  
+  var startIndex = (incomeCurrentPage - 1) * incomeItemsPerPage;
+  var endIndex = Math.min(startIndex + incomeItemsPerPage, incomeFilteredData.length);
+  
+  var html = '';
+  
+  for (var i = startIndex; i < endIndex; i++) {
+    var item = incomeFilteredData[i];
+    var id = item.ID || 'N/A';
+    var accountId = '';
+    
+    try {
+      var meta = typeof item.Metadata === 'string' ? JSON.parse(item.Metadata) : item.Metadata;
+      accountId = meta.accountId || '';
+    } catch(e) {}
+    
+    var categoryName = getCategoryName(item['Danh mục thu nhập']);
+    
+    html += '<tr>' +
+      '<td class="sticky-column">' + formatDate(item['Ngày']) + '</td>' +
+      '<td>' + categoryName + '</td>' +
+      '<td style="color: #24c560; font-weight: 600;">' + formatCurrency(item['Số tiền']) + ' đ</td>' +
+      '<td>' + (item['Mô tả'] || '-') + '</td>' +
+      '<td>' + getAccountName(accountId) + '</td>' +
+      '<td class="action-buttons">' +
+      '<button class="btn-primary btn-sm" onclick="editIncome(\'' + id + '\')"><i class="fas fa-edit"></i></button>' +
+      '<button class="btn-danger btn-sm" onclick="confirmDeleteIncome(\'' + id + '\')"><i class="fas fa-trash"></i></button>' +
+      '</td></tr>';
+  }
+  
+  return html;
+}
+
+function renderIncomePagination(totalPages) {
+  if (totalPages <= 1) return '';
+  
+  var html = '<div style="display: flex; justify-content: center; align-items: center; margin-top: 20px; gap: 10px;">';
+  
+  // Previous button
+  html += '<button class="btn-secondary btn-sm" onclick="incomeGoToPage(' + (incomeCurrentPage - 1) + ')" ' + 
+    (incomeCurrentPage === 1 ? 'disabled' : '') + '><i class="fas fa-chevron-left"></i></button>';
+  
+  // Page numbers
+  var startPage = Math.max(1, incomeCurrentPage - 2);
+  var endPage = Math.min(totalPages, incomeCurrentPage + 2);
+  
+  if (startPage > 1) {
+    html += '<button class="btn-secondary btn-sm" onclick="incomeGoToPage(1)">1</button>';
+    if (startPage > 2) html += '<span>...</span>';
+  }
+  
+  for (var i = startPage; i <= endPage; i++) {
+    if (i === incomeCurrentPage) {
+      html += '<button class="btn-primary btn-sm" disabled>' + i + '</button>';
+    } else {
+      html += '<button class="btn-secondary btn-sm" onclick="incomeGoToPage(' + i + ')">' + i + '</button>';
+    }
+  }
+  
+  if (endPage < totalPages) {
+    if (endPage < totalPages - 1) html += '<span>...</span>';
+    html += '<button class="btn-secondary btn-sm" onclick="incomeGoToPage(' + totalPages + ')">' + totalPages + '</button>';
+  }
+  
+  // Next button
+  html += '<button class="btn-secondary btn-sm" onclick="incomeGoToPage(' + (incomeCurrentPage + 1) + ')" ' + 
+    (incomeCurrentPage === totalPages ? 'disabled' : '') + '><i class="fas fa-chevron-right"></i></button>';
+  
+  html += '</div>';
+  
+  return html;
+}
+
+function incomeGoToPage(page) {
+  incomeCurrentPage = page;
+  renderIncomePage();
+  window.scrollTo(0, 0);
+}
+
+function renderAccountOptionsForFilter() {
+  var html = '';
+  
+  if (!allAccountsData || allAccountsData.length === 0) {
+    return html;
+  }
+  
+  for (var i = 0; i < allAccountsData.length; i++) {
+    var acc = allAccountsData[i];
+    html += '<option value="' + acc.AccountID + '">' + acc['Tên tài khoản'] + '</option>';
+  }
+  
+  return html;
+}
+
+// DELETE WITH MODAL CONFIRMATION
+function confirmDeleteIncome(id) {
+  var body = '<p style="text-align: center; font-size: 16px; margin: 20px 0;">Bạn có chắc chắn muốn xóa bản ghi này?</p>' +
+    '<p style="text-align: center; color: #e94849; font-weight: 500;">Hành động này không thể hoàn tác!</p>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-danger" onclick="executeDeleteIncome(\'' + id + '\')">Xóa</button>';
+  
+  openModal('Xác nhận xóa', body, footer);
+}
+
+function executeDeleteIncome(id) {
+  closeModal();
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response.success) {
+        reloadIncomeData();
+      } else {
+        hideLoading();
+        showToast(response.message, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .handleRequest('deleteRecord', {sheetName: 'Thu nhập', id: id});
+}
+
+// DOWNLOAD EXCEL TEMPLATE
+function downloadIncomeTemplate() {
+  // Tạo workbook mới
+  var wb = XLSX.utils.book_new();
+  
+  // Tạo data với format đẹp
+  var wsData = [
+    ['Ngày', 'Danh mục', 'Số tiền', 'Mô tả', 'Tài khoản'],
+    ['2025-10-20', 'salary', 15000000, 'Lương tháng 10', 'ACC001'],
+    ['2025-10-21', 'bonus', 5000000, 'Thưởng dự án', 'ACC002']
+  ];
+  
+  // Tạo worksheet
+  var ws = XLSX.utils.aoa_to_sheet(wsData);
+  
+  // Set column widths
+  ws['!cols'] = [
+    { wch: 12 },  // Ngày
+    { wch: 15 },  // Danh mục
+    { wch: 15 },  // Số tiền
+    { wch: 30 },  // Mô tả
+    { wch: 12 }   // Tài khoản
+  ];
+  
+  // Add worksheet to workbook
+  XLSX.utils.book_append_sheet(wb, ws, 'Income_Template');
+  
+  // Tạo file Excel
+  var wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  var blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  
+  // Download file
+  var link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'Income_Template.xlsx';
+  link.click();
+  
+  showToast('Đã tải xuống file mẫu Excel', 'success');
+}
+
+function openIncomeImportModal() {
+  var body = '<div class="form-group">' +
+    '<label>Chọn file Excel/CSV</label>' +
+    '<input type="file" id="incomeImportFile" accept=".xlsx,.xls,.csv" class="form-control">' +
+    '<small style="color: #718096; margin-top: 5px; display: block;">Định dạng: XLSX, XLS, CSV</small>' +
+    '<small style="color: #718096; margin-top: 5px; display: block;">Cấu trúc: Ngày | Danh mục | Số tiền | Mô tả | Tài khoản</small>' +
+    '<div style="margin-top: 10px; padding: 10px; background: #fffbeb; border-left: 3px solid #f59e0b; border-radius: 4px;">' +
+    '<strong>Lưu ý:</strong><br>' +
+    '<ul style="margin: 5px 0; padding-left: 20px; font-size: 13px;">' +
+    '<li>Ngày: Định dạng YYYY-MM-DD (VD: 2025-10-20)</li>' +
+    '<li>Danh mục: salary, bonus, investment, freelance, other</li>' +
+    '<li>Số tiền: Số nguyên (VD: 15000000)</li>' +
+    '<li>Tài khoản: Mã tài khoản (VD: ACC001)</li>' +
+    '</ul>' +
+    '</div>' +
+    '</div>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-primary" onclick="processIncomeImport()">Import</button>';
+  
+  openModal('Import dữ liệu Thu nhập', body, footer);
+}
+
+// PROCESS IMPORT EXCEL
+function processIncomeImport() {
+  var fileInput = document.getElementById('incomeImportFile');
+  
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    showToast('Vui lòng chọn file', 'error');
+    return;
+  }
+  
+  var file = fileInput.files[0];
+  var reader = new FileReader();
+  
+  closeModal();
+  showLoading();
+  
+  reader.onload = function(e) {
+    try {
+      var data = new Uint8Array(e.target.result);
+      var workbook = XLSX.read(data, { type: 'array' });
+      var firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      var jsonData = XLSX.utils.sheet_to_json(firstSheet);
+      
+      console.log('Imported income data:', jsonData);
+      
+      if (jsonData.length === 0) {
+        hideLoading();
+        showToast('File không có dữ liệu', 'error');
+        return;
+      }
+      
+      // Xử lý từng dòng tuần tự
+      var successCount = 0;
+      var errorCount = 0;
+      
+      function processRow(index) {
+        if (index >= jsonData.length) {
+          // Hoàn thành
+          console.log('=== IMPORT COMPLETED ===');
+          console.log('Success:', successCount, 'Error:', errorCount);
+          
+          hideLoading();
+          
+          if (successCount > 0) {
+            showToast('Import thành công ' + successCount + ' / ' + jsonData.length + ' bản ghi', 'success');
+            
+            // Reload data with delay
+            console.log('Reloading income data in 1 second...');
+            setTimeout(function() {
+              Promise.all([
+                loadSheetData('Thu nhập'),
+                loadSheetData('Tài khoản')
+              ]).then(function(results) {
+                allIncomeData = results[0];
+                allAccountsData = results[1];
+                incomeFilteredData = allIncomeData.slice(); // Reset filter
+                incomeCurrentPage = 1; // Reset về trang 1
+                
+                console.log('Income data reloaded:', allIncomeData.length, 'records');
+                
+                renderIncomePage();
+              }).catch(function(error) {
+                console.error('Error reloading income data:', error);
+                showToast('Lỗi tải lại dữ liệu', 'error');
+              });
+            }, 1500); // Delay 1.5 giây
+          } else {
+            showToast('Không có bản ghi nào được import', 'error');
+          }
+          
+          if (errorCount > 0) {
+            showToast('Có ' + errorCount + ' lỗi', 'error');
+          }
+          
+          return;
+        }
+        
+        var row = jsonData[index];
+        
+        console.log('Processing income row ' + (index + 1) + ':', row);
+        
+        // Validate
+        if (!row['Ngày'] || !row['Danh mục'] || !row['Số tiền'] || !row['Tài khoản']) {
+          console.error('Row ' + (index + 1) + ': Missing required fields');
+          errorCount++;
+          processRow(index + 1);
+          return;
+        }
+        
+        // Parse date
+        var dateValue = row['Ngày'];
+        var formattedDate = '';
+        
+        if (typeof dateValue === 'number') {
+          var excelDate = XLSX.SSF.parse_date_code(dateValue);
+          formattedDate = excelDate.y + '-' + 
+            String(excelDate.m).padStart(2, '0') + '-' + 
+            String(excelDate.d).padStart(2, '0');
+        } else if (typeof dateValue === 'string') {
+          formattedDate = dateValue;
+        } else {
+          console.error('Row ' + (index + 1) + ': Invalid date format');
+          errorCount++;
+          processRow(index + 1);
+          return;
+        }
+        
+        var accountId = row['Tài khoản'];
+        var amount = parseFloat(row['Số tiền']);
+        
+        // Create record
+        var recordData = {
+          'ID': generateId('TN'),
+          'Ngày': formattedDate,
+          'Danh mục thu nhập': JSON.stringify([{
+            id: row['Danh mục'], 
+            name: getCategoryLabel(row['Danh mục'])
+          }]),
+          'Số tiền': amount,
+          'Mô tả': row['Mô tả'] || '',
+          'Phương thức thanh toán': JSON.stringify([{
+            id: accountId, 
+            name: getAccountName(accountId)
+          }]),
+          'UserID': currentUser.userId,
+          'Metadata': JSON.stringify({accountId: accountId})
+        };
+        
+        console.log('Creating income record:', recordData);
+        
+        // Create record in Sheet
+        google.script.run
+          .withSuccessHandler(function(response) {
+            if (response.success) {
+              console.log('Income row ' + (index + 1) + ' created successfully');
+              
+              // Update account balance (ADD)
+              google.script.run
+                .withSuccessHandler(function(balanceResponse) {
+                  console.log('Balance updated for income row ' + (index + 1));
+                  successCount++;
+                  processRow(index + 1);
+                })
+                .withFailureHandler(function(error) {
+                  console.error('Balance update failed for income row ' + (index + 1) + ':', error);
+                  successCount++; // Vẫn tính là thành công
+                  processRow(index + 1);
+                })
+                .handleRequest('updateAccountBalance', {
+                  accountId: accountId,
+                  amount: amount,
+                  type: 'add'
+                });
+            } else {
+              console.error('Income row ' + (index + 1) + ' failed:', response.message);
+              errorCount++;
+              processRow(index + 1);
+            }
+          })
+          .withFailureHandler(function(error) {
+            console.error('Income row ' + (index + 1) + ' error:', error);
+            errorCount++;
+            processRow(index + 1);
+          })
+          .handleRequest('createRecord', {
+            sheetName: 'Thu nhập',
+            data: recordData
+          });
+        
+      }
+      
+      // Bắt đầu xử lý từ row 0
+      processRow(0);
+      
+    } catch (error) {
+      hideLoading();
+      showToast('Lỗi đọc file: ' + error.message, 'error');
+      console.error('Import error:', error);
+    }
+  };
+  
+  reader.onerror = function() {
+    hideLoading();
+    showToast('Lỗi đọc file', 'error');
+  };
+  
+  reader.readAsArrayBuffer(file);
+}
+
+// ========================================
+// INCOME MODAL - OPTIMIZED VERSION
+// ========================================
+
+function openIncomeModal(id) {
+  console.log('=== OPENING INCOME MODAL ===', id ? 'EDIT' : 'CREATE');
+  
+  var isEdit = !!id;
+  var item = {};
+  
+  if (isEdit) {
+    // Use DataManager for instant lookup
+    const incomeList = DataManager.getIncome();
+    item = incomeList.find(i => i.ID === id) || {};
+    
+    if (!item.ID) {
+      showToast('Không tìm thấy bản ghi', 'error');
+      return;
+    }
+  }
+  
+  // Parse existing data
+  var accountId = '';
+  var categoryId = '';
+  var subcategoryId = '';
+  
+  if (isEdit && item.Metadata) {
+    try {
+      var meta = typeof item.Metadata === 'string' ? JSON.parse(item.Metadata) : item.Metadata;
+      accountId = meta.accountId || '';
+    } catch(e) {
+      console.error('Parse metadata error:', e);
+    }
+  }
+  
+  if (isEdit && item['Danh mục thu nhập']) {
+    try {
+      var cat = typeof item['Danh mục thu nhập'] === 'string' ? 
+        JSON.parse(item['Danh mục thu nhập']) : item['Danh mục thu nhập'];
+      if (cat && cat[0]) {
+        categoryId = cat[0].id || '';
+        subcategoryId = cat[0].subcategoryId || '';
+      }
+    } catch(e) {
+      console.error('Parse category error:', e);
+    }
+  }
+  
+  // Build modal HTML
+  var body = 
+    '<form id="incomeForm" onsubmit="handleSaveIncome(event, \'' + (id || '') + '\')">' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-calendar"></i> Ngày <span style="color: red;">*</span></label>' +
+    '<input type="date" id="incomeDate" name="Ngày" class="form-control" value="' + 
+    (item['Ngày'] || new Date().toISOString().split('T')[0]) + '" required>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-tag"></i> Danh mục chính <span style="color: red;">*</span></label>' +
+    '<select id="incomeCategory" name="Danh mục" class="form-control" onchange="loadIncomeSubcategories()" required>' +
+    '<option value="">-- Loading categories... --</option>' +
+    '</select>' +
+    '</div>' +
+    
+    '<div class="form-group" id="incomeSubcategoryWrapper" style="display: none;">' +
+    '<label><i class="fas fa-sitemap"></i> Danh mục con (Tùy chọn)</label>' +
+    '<select id="incomeSubcategory" class="form-control">' +
+    '<option value="">-- Không chọn --</option>' +
+    '</select>' +
+    '<small style="color: #718096; display: block; margin-top: 5px;">Nếu không chọn, chỉ lưu danh mục chính</small>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-money-bill-wave"></i> Số tiền (VNĐ) <span style="color: red;">*</span></label>' +
+    '<input type="text" id="incomeAmount" name="Số tiền" class="form-control currency-input" value="' + 
+    (isEdit ? formatCurrency(item['Số tiền']) : '0') + '" required>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-university"></i> Tài khoản nhận <span style="color: red;">*</span></label>' +
+    '<select id="incomePayment" name="Tài khoản" class="form-control" required>' + 
+    renderAccountOptions(accountId) + 
+    '</select>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-comment"></i> Mô tả</label>' +
+    '<textarea id="incomeDescription" class="form-control" rows="3" placeholder="Ghi chú về khoản thu nhập...">' + 
+    (item['Mô tả'] || '') + '</textarea>' +
+    '</div>' +
+    
+    '</form>';
+  
+  var footer = 
+    '<button type="button" class="btn-secondary" onclick="closeModal()">' +
+    '<i class="fas fa-times"></i> Hủy' +
+    '</button>' +
+    '<button type="button" class="btn-primary" onclick="document.getElementById(\'incomeForm\').requestSubmit()">' +
+    '<i class="fas fa-save"></i> Lưu' +
+    '</button>';
+  
+  openModal(
+    isEdit ? '✏️ Sửa thu nhập' : '➕ Thêm thu nhập', 
+    body, 
+    footer
+  );
+  
+  // Initialize after modal opens
+  setTimeout(function() {
+    console.log('🔧 Initializing income modal...');
+    
+    // 1. Load categories from cache (INSTANT)
+    const categories = DataManager.getCategories('income');
+    console.log('✅ Loaded', categories.length, 'income categories from cache');
+    
+    var categorySelect = document.getElementById('incomeCategory');
+    if (categorySelect) {
+      categorySelect.innerHTML = renderCategoryOptions(categories, categoryId);
+      
+      // If editing and has category, load subcategories
+      if (categoryId) {
+        loadIncomeSubcategories().then(function() {
+          if (subcategoryId) {
+            var subcatSelect = document.getElementById('incomeSubcategory');
+            if (subcatSelect) {
+              subcatSelect.value = subcategoryId;
+            }
+          }
+        });
+      }
+    }
+    
+    // 2. Setup currency input
+    setupCurrencyInput(document.getElementById('incomeAmount'));
+    
+    // 3. Enable real-time validation
+    const form = document.getElementById('incomeForm');
+    if (form) {
+      Validator.enableRealTimeValidation(form, 'income');
+    }
+    
+    // 4. Focus first input
+    document.getElementById('incomeDate').focus();
+    
+    console.log('✅ Income modal initialized');
+  }, 100);
+}
+
+// ========================================
+// LOAD INCOME SUBCATEGORIES
+// ========================================
+
+function loadIncomeSubcategories() {
+  return new Promise(function(resolve, reject) {
+    var categorySelect = document.getElementById('incomeCategory');
+    var subcategoryWrapper = document.getElementById('incomeSubcategoryWrapper');
+    var subcategorySelect = document.getElementById('incomeSubcategory');
+    
+    if (!categorySelect || !subcategoryWrapper || !subcategorySelect) {
+      reject('Elements not found');
+      return;
+    }
+    
+    var categoryId = categorySelect.value;
+    
+    if (!categoryId) {
+      subcategoryWrapper.style.display = 'none';
+      subcategorySelect.innerHTML = '<option value="">-- Không chọn --</option>';
+      resolve();
+      return;
+    }
+    
+    console.log('📥 Loading subcategories for:', categoryId);
+    
+    subcategorySelect.innerHTML = '<option value="">-- Đang tải... --</option>';
+    subcategoryWrapper.style.display = 'block';
+    
+    // Call backend to get subcategories
+    google.script.run
+      .withSuccessHandler(function(response) {
+        if (response.success && response.data.length > 0) {
+          console.log('✅ Loaded', response.data.length, 'subcategories');
+          subcategorySelect.innerHTML = renderSubcategoryOptions(response.data, '');
+          subcategoryWrapper.style.display = 'block';
+        } else {
+          subcategorySelect.innerHTML = '<option value="">-- Không có danh mục con --</option>';
+          subcategoryWrapper.style.display = 'block';
+        }
+        resolve();
+      })
+      .withFailureHandler(function(error) {
+        console.error('❌ Load subcategories error:', error);
+        subcategorySelect.innerHTML = '<option value="">-- Lỗi tải dữ liệu --</option>';
+        reject(error);
+      })
+      .handleRequest('getSubcategories', { 
+        parentId: categoryId,
+        userId: currentUser.userId 
+      });
+  });
+}
+
+// ========================================
+// SAVE INCOME - WITH VALIDATION & ERROR RECOVERY
+// ========================================
+
+async function handleSaveIncome(event, id) {
+  event.preventDefault();
+  
+  console.log('=== SAVING INCOME ===', id ? 'UPDATE' : 'CREATE');
+  
+  // Clear previous errors
+  Validator.clearErrors();
+  
+  // Collect form data
+  var formData = {
+    'Ngày': document.getElementById('incomeDate').value,
+    'Danh mục': document.getElementById('incomeCategory').value,
+    'Số tiền': parseCurrency(document.getElementById('incomeAmount').value),
+    'Tài khoản': document.getElementById('incomePayment').value
+  };
+  
+  var subcategoryId = document.getElementById('incomeSubcategory') ? 
+    document.getElementById('incomeSubcategory').value : '';
+  var description = document.getElementById('incomeDescription').value;
+  
+  // Validate
+  const validation = Validator.validate(formData, 'income');
+  
+  if (!validation.valid) {
+    console.log('❌ Validation failed:', validation.errors);
+    Validator.showErrors(validation.errors);
+    return;
+  }
+  
+  // Get category details
+  var categoryInfo = DataManager.getCategoryById(formData['Danh mục']);
+  var categoryName = categoryInfo ? categoryInfo.name : formData['Danh mục'];
+  
+  // Build category data
+  var categoryData = {
+    id: formData['Danh mục'],
+    name: categoryName
+  };
+  
+  // Add subcategory if selected
+  if (subcategoryId) {
+    var subcategorySelect = document.getElementById('incomeSubcategory');
+    var subcategoryName = '';
+    
+    if (subcategorySelect) {
+      var selectedOption = subcategorySelect.options[subcategorySelect.selectedIndex];
+      if (selectedOption) {
+        subcategoryName = selectedOption.text.replace('├─ ', '').trim();
+      }
+    }
+    
+    categoryData.subcategory = subcategoryName;
+    categoryData.subcategoryId = subcategoryId;
+  }
+  
+  // Build record data
+  var recordData = {
+    'ID': id || generateId('TN'),
+    'Ngày': formData['Ngày'],
+    'Danh mục thu nhập': JSON.stringify([categoryData]),
+    'Số tiền': formData['Số tiền'],
+    'Mô tả': description,
+    'Phương thức thanh toán': JSON.stringify([{
+      id: formData['Tài khoản'], 
+      name: getAccountName(formData['Tài khoản'])
+    }]),
+    'UserID': currentUser.userId,
+    'Metadata': JSON.stringify({accountId: formData['Tài khoản']})
+  };
+  
+  console.log('💾 Record data:', recordData);
+  
+  closeModal();
+  showLoading('Đang lưu...');
+  
+  try {
+    // Optimistic update
+    if (id) {
+      DataManager.updateRecord('Thu nhập', id, recordData);
+    } else {
+      DataManager.addRecord('Thu nhập', recordData);
+    }
+    
+    // Update UI immediately
+    allIncomeData = DataManager.getIncome();
+    incomeFilteredData = allIncomeData.slice();
+    renderIncomePage();
+    
+    // Save to server with retry
+    var action = id ? 'updateRecord' : 'createRecord';
+    var params = id ? 
+      {sheetName: 'Thu nhập', id: id, data: recordData} : 
+      {sheetName: 'Thu nhập', data: recordData};
+    
+    const response = await ErrorHandler.callWithRetry(action, params);
+    
+    if (response.success) {
+      console.log('✅ Server save successful');
+      
+      // Update account balance
+      try {
+        await ErrorHandler.callWithRetry('updateAccountBalance', {
+          accountId: formData['Tài khoản'],
+          amount: formData['Số tiền'],
+          type: 'add'
+        });
+        
+        // Refresh accounts
+        const accountsData = await DataManager.refresh('Tài khoản');
+        allAccountsData = accountsData;
+        
+        console.log('✅ Account balance updated');
+      } catch (balanceError) {
+        console.error('⚠️ Balance update failed:', balanceError);
+        showToast('Lưu thành công nhưng chưa cập nhật số dư', 'warning');
+      }
+      
+      hideLoading();
+      showToast('✅ Đã lưu thu nhập!', 'success');
+      
+    } else {
+      throw new Error(response.message || 'Save failed');
+    }
+    
+  } catch (error) {
+    console.error('❌ Save error:', error);
+    
+    // Rollback optimistic update
+    await DataManager.refresh('Thu nhập');
+    allIncomeData = DataManager.getIncome();
+    incomeFilteredData = allIncomeData.slice();
+    renderIncomePage();
+    
+    hideLoading();
+    // Error toast already shown by ErrorHandler
+  }
+}
+
+function editIncome(id) {
+  openIncomeModal(id);
+}
+
+function confirmDeleteIncome(id) {
+  var body = '<p style="text-align: center; font-size: 16px; margin: 20px 0;">Bạn có chắc chắn muốn xóa bản ghi này?</p>' +
+    '<p style="text-align: center; color: #e94849; font-weight: 500;">Hành động này không thể hoàn tác!</p>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-danger" onclick="executeDeleteIncome(\'' + id + '\')">Xóa</button>';
+  
+  openModal('Xác nhận xóa', body, footer);
+}
+
+function executeDeleteIncome(id) {
+  closeModal();
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response.success) {
+        reloadIncomeData();
+      } else {
+        hideLoading();
+        showToast(response.message, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .handleRequest('deleteRecord', {sheetName: 'Thu nhập', id: id});
+}
+
+function reloadIncomeData() {
+  showLoading();
+  
+  Promise.all([
+    loadSheetData('Thu nhập'),
+    loadSheetData('Tài khoản')
+  ]).then(function(results) {
+    allIncomeData = results[0];
+    allAccountsData = results[1];
+    
+    hideLoading();
+    renderIncomePage();
+    showToast('Dữ liệu đã được cập nhật', 'success');
+  }).catch(function(error) {
+    hideLoading();
+    console.error('Reload error:', error);
+    showToast('Lỗi tải dữ liệu', 'error');
+  });
+}
+
+// Helper function to render account options for select
+function renderAccountOptions() {
+  var html = '<option value="">-- Chọn tài khoản --</option>';
+  
+  if (!allAccountsData || allAccountsData.length === 0) {
+    return html;
+  }
+  
+  for (var i = 0; i < allAccountsData.length; i++) {
+    var acc = allAccountsData[i];
+    html += '<option value="' + acc.AccountID + '">' + 
+      acc['Tên tài khoản'] + ' (' + formatCurrency(acc['Số dư hiện tại']) + ' đ)</option>';
+  }
+  
+  return html;
+}
+
+function reloadIncomeData() {
+  showLoading();
+  
+  Promise.all([
+    loadSheetData('Thu nhập'),
+    loadSheetData('Tài khoản')
+  ]).then(function(results) {
+    allIncomeData = results[0];
+    allAccountsData = results[1];
+    
+    hideLoading();
+    renderIncomePage();
+    showToast('Dữ liệu đã được làm mới', 'success');
+  }).catch(function(error) {
+    hideLoading();
+    console.error('Reload error:', error);
+    showToast('Lỗi tải dữ liệu', 'error');
+  });
+}
+
+// Test Income Page
+(async function testIncomePage() {
+  console.log('=== Testing Income Page ===');
+  
+  if (!DataManager.isInitialized()) {
+    await DataManager.initialize();
+    syncLegacyVariables();
+  }
+  
+  // Test 1: Show income page
+  showIncomePage();
+  
+  setTimeout(() => {
+    // Test 2: Check pagination
+    console.assert(incomeCurrentPage === 1, 'Should start at page 1');
+    console.assert(incomeItemsPerPage === 10, 'Should show 10 items per page');
+    
+    // Test 3: Check filter inputs exist
+    var fromDateEl = document.getElementById('incomeFilterFromDate');
+    var categoryEl = document.getElementById('incomeFilterCategory');
+    console.assert(fromDateEl !== null, 'Filter inputs should exist');
+    console.assert(categoryEl !== null, 'Category filter should exist');
+    
+    // Test 4: Test pagination
+    if (allIncomeData.length > 10) {
+      incomeGoToPage(2);
+      console.assert(incomeCurrentPage === 2, 'Should go to page 2');
+    }
+    
+    console.log('✅ Income page tests passed');
+  }, 500);
+})();
+
+</script>
