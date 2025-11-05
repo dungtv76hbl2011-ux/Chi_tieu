@@ -1,1 +1,428 @@
+<script>
+// ========================================
+// DATA MANAGER - CENTRALIZED CACHE SYSTEM
+// ========================================
 
+const DataManager = (function() {
+  'use strict';
+  
+  // Private state
+  const cache = {
+    income: [],
+    expense: [],
+    budget: [],
+    loan: [],
+    investment: [],
+    thirdParty: [],
+    accounts: [],
+    settings: [],
+    categories: {
+      expense: [],
+      income: [],
+      budget: []
+    },
+    categoryMap: {}, // Fast lookup by ID
+    lastUpdated: {}
+  };
+  
+  const loadingState = {
+    isInitialized: false,
+    isLoading: false,
+    failedSheets: []
+  };
+  
+  const listeners = {}; // Event listeners for data changes
+  
+  // ========== INITIALIZATION ==========
+  
+  async function initialize() {
+    if (loadingState.isLoading) {
+      console.log('⏳ Already loading...');
+      return;
+    }
+    
+    if (loadingState.isInitialized) {
+      console.log('✅ Already initialized');
+      return cache;
+    }
+    
+    loadingState.isLoading = true;
+    showLoading('Đang tải dữ liệu...');
+    
+    try {
+      console.log('=== INITIALIZING DATA MANAGER ===');
+      
+      // Load all data in parallel
+      const [
+        incomeData,
+        expenseData,
+        budgetData,
+        loanData,
+        investmentData,
+        thirdPartyData,
+        accountsData,
+        settingsData,
+        expenseCategories,
+        incomeCategories,
+        budgetCategories
+      ] = await Promise.all([
+        loadSheet('Thu nhập'),
+        loadSheet('Chi tiêu'),
+        loadSheet('Ngân sách'),
+        loadSheet('Khoản vay'),
+        loadSheet('Đầu tư'),
+        loadSheet('Thu chi hộ'),
+        loadSheet('Tài khoản'),
+        loadSheet('Cài đặt'),
+        loadCategories('expense'),
+        loadCategories('income'),
+        loadCategories('budget')
+      ]);
+      
+      // Store in cache
+      cache.income = incomeData || [];
+      cache.expense = expenseData || [];
+      cache.budget = budgetData || [];
+      cache.loan = loanData || [];
+      cache.investment = investmentData || [];
+      cache.thirdParty = thirdPartyData || [];
+      cache.accounts = accountsData || [];
+      cache.settings = settingsData || [];
+      
+      cache.categories.expense = expenseCategories || [];
+      cache.categories.income = incomeCategories || [];
+      cache.categories.budget = budgetCategories || [];
+      
+      // Build category map for O(1) lookup
+      buildCategoryMap();
+      
+      // Update timestamps
+      const now = Date.now();
+      Object.keys(cache).forEach(key => {
+        if (key !== 'categoryMap' && key !== 'lastUpdated') {
+          cache.lastUpdated[key] = now;
+        }
+      });
+      
+      loadingState.isInitialized = true;
+      loadingState.isLoading = false;
+      
+      console.log('✅ Data Manager Initialized');
+      console.log('Cache:', {
+        income: cache.income.length,
+        expense: cache.expense.length,
+        budget: cache.budget.length,
+        accounts: cache.accounts.length,
+        expenseCategories: cache.categories.expense.length,
+        incomeCategories: cache.categories.income.length
+      });
+      
+      hideLoading();
+      
+      // Trigger initialized event
+      emit('initialized', cache);
+      
+      return cache;
+      
+    } catch (error) {
+      loadingState.isLoading = false;
+      console.error('❌ Initialization failed:', error);
+      hideLoading();
+      showToast('Lỗi tải dữ liệu: ' + error.message, 'error');
+      throw error;
+    }
+  }
+  
+  // ========== CATEGORY MAP ==========
+  
+  function buildCategoryMap() {
+    cache.categoryMap = {};
+    
+    ['expense', 'income', 'budget'].forEach(type => {
+      const categories = cache.categories[type] || [];
+      categories.forEach(cat => {
+        cache.categoryMap[cat.id] = cat;
+      });
+    });
+    
+    console.log('✅ Category map built:', Object.keys(cache.categoryMap).length, 'categories');
+  }
+  
+  // ========== LOAD HELPERS ==========
+  
+  function loadSheet(sheetName) {
+    return new Promise((resolve, reject) => {
+      console.log('📥 Loading:', sheetName);
+      
+      google.script.run
+        .withSuccessHandler(response => {
+          if (response && response.success) {
+            console.log('✅', sheetName, ':', response.data.length, 'records');
+            resolve(response.data || []);
+          } else {
+            console.warn('⚠️', sheetName, 'failed:', response?.message);
+            loadingState.failedSheets.push(sheetName);
+            resolve([]);
+          }
+        })
+        .withFailureHandler(error => {
+          console.error('❌', sheetName, 'error:', error);
+          loadingState.failedSheets.push(sheetName);
+          resolve([]);
+        })
+        .getRecords(sheetName);
+    });
+  }
+  
+  function loadCategories(type) {
+    return new Promise((resolve, reject) => {
+      console.log('📥 Loading categories:', type);
+      
+      google.script.run
+        .withSuccessHandler(response => {
+          if (response && response.success) {
+            console.log('✅', type, 'categories:', response.data.length);
+            resolve(response.data || []);
+          } else {
+            console.warn('⚠️', type, 'categories failed');
+            resolve([]);
+          }
+        })
+        .withFailureHandler(error => {
+          console.error('❌', type, 'categories error:', error);
+          resolve([]);
+        })
+        .handleRequest('getMainCategories', { type: type });
+    });
+  }
+  
+  // ========== GETTERS ==========
+  
+  function getIncome() {
+    return [...cache.income];
+  }
+  
+  function getExpense() {
+    return [...cache.expense];
+  }
+  
+  function getBudget() {
+    return [...cache.budget];
+  }
+  
+  function getLoan() {
+    return [...cache.loan];
+  }
+  
+  function getInvestment() {
+    return [...cache.investment];
+  }
+  
+  function getThirdParty() {
+    return [...cache.thirdParty];
+  }
+  
+  function getAccounts() {
+    return [...cache.accounts];
+  }
+  
+  function getSettings() {
+    return [...cache.settings];
+  }
+  
+  function getCategories(type) {
+    return [...(cache.categories[type] || [])];
+  }
+  
+  function getCategoryById(id) {
+    return cache.categoryMap[id] || null;
+  }
+  
+  function getAllCategories() {
+    return { ...cache.categories };
+  }
+  
+  // ========== OPTIMISTIC UPDATES ==========
+  
+  function addRecord(sheetName, record) {
+    const key = getKeyFromSheetName(sheetName);
+    if (!key) return;
+    
+    cache[key].push(record);
+    emit('recordAdded', { sheetName, record });
+  }
+  
+  function updateRecord(sheetName, id, updates) {
+    const key = getKeyFromSheetName(sheetName);
+    if (!key) return;
+    
+    const index = cache[key].findIndex(r => r.ID === id || r.AccountID === id);
+    if (index >= 0) {
+      cache[key][index] = { ...cache[key][index], ...updates };
+      emit('recordUpdated', { sheetName, id, updates });
+    }
+  }
+  
+  function deleteRecord(sheetName, id) {
+    const key = getKeyFromSheetName(sheetName);
+    if (!key) return;
+    
+    cache[key] = cache[key].filter(r => r.ID !== id && r.AccountID !== id);
+    emit('recordDeleted', { sheetName, id });
+  }
+  
+  // ========== REFRESH ==========
+  
+  async function refresh(sheetName) {
+    const key = getKeyFromSheetName(sheetName);
+    if (!key) return;
+    
+    console.log('🔄 Refreshing:', sheetName);
+    
+    try {
+      const data = await loadSheet(sheetName);
+      cache[key] = data;
+      cache.lastUpdated[key] = Date.now();
+      
+      emit('refreshed', { sheetName, count: data.length });
+      
+      return data;
+    } catch (error) {
+      console.error('Refresh error:', error);
+      throw error;
+    }
+  }
+  
+  async function refreshCategories(type) {
+    console.log('🔄 Refreshing categories:', type);
+    
+    try {
+      const data = await loadCategories(type);
+      cache.categories[type] = data;
+      buildCategoryMap();
+      
+      emit('categoriesRefreshed', { type, count: data.length });
+      
+      return data;
+    } catch (error) {
+      console.error('Refresh categories error:', error);
+      throw error;
+    }
+  }
+  
+  // ========== EVENT SYSTEM ==========
+  
+  function on(event, callback) {
+    if (!listeners[event]) {
+      listeners[event] = [];
+    }
+    listeners[event].push(callback);
+  }
+  
+  function off(event, callback) {
+    if (!listeners[event]) return;
+    listeners[event] = listeners[event].filter(cb => cb !== callback);
+  }
+  
+  function emit(event, data) {
+    if (!listeners[event]) return;
+    listeners[event].forEach(callback => {
+      try {
+        callback(data);
+      } catch (error) {
+        console.error('Event listener error:', error);
+      }
+    });
+  }
+  
+  // ========== HELPERS ==========
+  
+  function getKeyFromSheetName(sheetName) {
+    const map = {
+      'Thu nhập': 'income',
+      'Chi tiêu': 'expense',
+      'Ngân sách': 'budget',
+      'Khoản vay': 'loan',
+      'Đầu tư': 'investment',
+      'Thu chi hộ': 'thirdParty',
+      'Tài khoản': 'accounts',
+      'Cài đặt': 'settings'
+    };
+    return map[sheetName];
+  }
+  
+  function isInitialized() {
+    return loadingState.isInitialized;
+  }
+  
+  function getFailedSheets() {
+    return [...loadingState.failedSheets];
+  }
+  
+  // ========== PUBLIC API ==========
+  
+  return {
+    initialize,
+    
+    // Getters
+    getIncome,
+    getExpense,
+    getBudget,
+    getLoan,
+    getInvestment,
+    getThirdParty,
+    getAccounts,
+    getSettings,
+    getCategories,
+    getCategoryById,
+    getAllCategories,
+    
+    // Optimistic updates
+    addRecord,
+    updateRecord,
+    deleteRecord,
+    
+    // Refresh
+    refresh,
+    refreshCategories,
+    
+    // Events
+    on,
+    off,
+    
+    // Utils
+    isInitialized,
+    getFailedSheets
+  };
+})();
+
+  // Test DataManager
+(async function testDataManager() {
+  console.log('=== Testing DataManager ===');
+  
+  // Test 1: Initialize
+  await DataManager.initialize();
+  console.assert(DataManager.isInitialized(), 'DataManager not initialized');
+  
+  // Test 2: Get data
+  var income = DataManager.getIncome();
+  console.assert(Array.isArray(income), 'getIncome should return array');
+  console.log('✓ Income records:', income.length);
+  
+  var expense = DataManager.getExpense();
+  console.assert(Array.isArray(expense), 'getExpense should return array');
+  console.log('✓ Expense records:', expense.length);
+  
+  var accounts = DataManager.getAccounts();
+  console.assert(Array.isArray(accounts), 'getAccounts should return array');
+  console.log('✓ Accounts:', accounts.length);
+  
+  // Test 3: Get categories
+  var expenseCategories = DataManager.getCategories('expense');
+  console.assert(Array.isArray(expenseCategories), 'getCategories should return array');
+  console.log('✓ Expense categories:', expenseCategories.length);
+  
+  console.log('✅ DataManager tests passed');
+})();
+
+</script>
