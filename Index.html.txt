@@ -183,5 +183,21 @@
 
   <!-- JavaScript -->
   <?!= include('JavaScript'); ?>
+  <?!= include('JavaScript/00-config'); ?>
+  <?!= include('JavaScript/01-utils'); ?>
+  <?!= include('JavaScript/02-data-manager'); ?>
+  <?!= include('JavaScript/03-error-handler'); ?>
+  <?!= include('JavaScript/04-validator'); ?>
+  <?!= include('JavaScript/05-category-manager'); ?>
+  <?!= include('JavaScript/06-auth'); ?>
+  <?!= include('JavaScript/07-navigation'); ?>
+  <?!= include('JavaScript/08-dashboard'); ?>
+  <?!= include('JavaScript/09-income'); ?>
+  <?!= include('JavaScript/10-expense'); ?>
+  <?!= include('JavaScript/11-budget'); ?>
+  <?!= include('JavaScript/12-loan'); ?>
+  <?!= include('JavaScript/13-accounts'); ?>
+  <?!= include('JavaScript/14-settings'); ?>
+  <?!= include('JavaScript/15-init'); ?>
 </body>
 </html>
