@@ -1,1 +1,2244 @@
+<script>
 
+/**
+ * Show loan page - MAIN ENTRY POINT
+ */
+function showLoanPage() {
+  console.log('=== SHOW LOAN PAGE ===');
+  
+  showLoading('Đang tải dữ liệu khoản vay...');
+  
+  // Load loan data
+  if (DataManager && DataManager.isInitialized && DataManager.isInitialized()) {
+    allLoanData = DataManager.getLoan();
+    loanFilteredData = allLoanData.slice();
+    hideLoading();
+    renderLoanPage();
+  } else {
+    // Fallback: Load directly
+    google.script.run
+      .withSuccessHandler(function(response) {
+        console.log('Loan data loaded:', response);
+        
+        if (response.success) {
+          allLoanData = response.data || [];
+          loanFilteredData = allLoanData.slice();
+        } else {
+          allLoanData = [];
+          loanFilteredData = [];
+          showToast('Không thể tải dữ liệu khoản vay', 'error');
+        }
+        
+        hideLoading();
+        renderLoanPage();
+      })
+      .withFailureHandler(function(error) {
+        console.error('Load loan error:', error);
+        hideLoading();
+        showToast('Lỗi tải dữ liệu: ' + error.message, 'error');
+        
+        // Render empty page
+        allLoanData = [];
+        loanFilteredData = [];
+        renderLoanPage();
+      })
+      .getRecords('Khoản vay');
+  }
+}
+
+/**
+ * Render loan page - FIXED VERSION
+ */
+function renderLoanPage() {
+  console.log('=== RENDERING LOAN PAGE ===');
+  
+  document.getElementById('pageTitle').textContent = 'Khoản vay';
+  
+  // Apply filters DIRECTLY without calling applyLoanFilters()
+  if (document.getElementById('loanFromDate')) {
+    loanFilters.fromDate = document.getElementById('loanFromDate').value;
+  }
+  if (document.getElementById('loanToDate')) {
+    loanFilters.toDate = document.getElementById('loanToDate').value;
+  }
+  if (document.getElementById('loanNameFilter')) {
+    loanFilters.loanName = document.getElementById('loanNameFilter').value.toLowerCase();
+  }
+  if (document.getElementById('loanStatusFilter')) {
+    loanFilters.status = document.getElementById('loanStatusFilter').value;
+  }
+  
+  // Filter data
+  loanFilteredData = allLoanData.filter(function(item) {
+    var loanDate = item['Ngày vay'] || '';
+    var loanName = (item['Danh mục vay'] || '').toLowerCase();
+    var status = item['Tình trạng'] || 'active';
+    
+    if (loanFilters.fromDate && loanDate < loanFilters.fromDate) return false;
+    if (loanFilters.toDate && loanDate > loanFilters.toDate) return false;
+    if (loanFilters.loanName && loanName.indexOf(loanFilters.loanName) === -1) return false;
+    if (loanFilters.status && status !== loanFilters.status) return false;
+    
+    return true;
+  });
+  
+  var totalPages = Math.ceil(loanFilteredData.length / loanItemsPerPage);
+  var startIndex = (loanCurrentPage - 1) * loanItemsPerPage;
+  var endIndex = Math.min(startIndex + loanItemsPerPage, loanFilteredData.length);
+  
+  console.log('Total filtered:', loanFilteredData.length);
+  console.log('Current page:', loanCurrentPage);
+  console.log('Items per page:', loanItemsPerPage);
+  console.log('Total pages:', totalPages);
+  
+  var html = 
+    // Filter Section
+    '<div class="card">' +
+    '<div class="card-header">' +
+    '<h3 class="card-title">Quản lý Khoản vay</h3>' +
+    '<div style="display: flex; gap: 10px;">' +
+    '<button class="btn-primary" onclick="downloadLoanTemplate()">' +
+    '<i class="fas fa-download"></i> Tải mẫu' +
+    '</button>' +
+    '<button class="btn-warning" onclick="openLoanImportModal()">' +
+    '<i class="fas fa-file-import"></i> Import Excel' +
+    '</button>' +
+    '<button class="btn-success" onclick="exportLoanToExcel()">' +
+    '<i class="fas fa-file-excel"></i> Xuất Excel' +
+    '</button>' +
+    '<button class="btn-primary" onclick="openLoanModal(null)">' +
+    '<i class="fas fa-plus"></i> Thêm khoản vay' +
+    '</button>' +
+    '</div>' +
+    '</div>' +
+    
+    // Notifications container
+    '<div id="loanNotifications"></div>' +
+    
+    // Filters
+    '<div style="padding: 20px; background: #f9fafb; border-radius: 8px; margin-bottom: 20px;">' +
+    '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px;">' +
+    '<div>' +
+    '<label style="display: block; font-size: 13px; font-weight: 500; color: #4a5568; margin-bottom: 5px;">Từ ngày vay</label>' +
+    '<input type="date" id="loanFromDate" class="form-control" value="' + loanFilters.fromDate + '" onchange="renderLoanPage()">' +
+    '</div>' +
+    '<div>' +
+    '<label style="display: block; font-size: 13px; font-weight: 500; color: #4a5568; margin-bottom: 5px;">Đến ngày vay</label>' +
+    '<input type="date" id="loanToDate" class="form-control" value="' + loanFilters.toDate + '" onchange="renderLoanPage()">' +
+    '</div>' +
+    '<div>' +
+    '<label style="display: block; font-size: 13px; font-weight: 500; color: #4a5568; margin-bottom: 5px;">Tên khoản vay</label>' +
+    '<input type="text" id="loanNameFilter" class="form-control" placeholder="Tìm theo tên..." value="' + loanFilters.loanName + '" oninput="renderLoanPage()">' +
+    '</div>' +
+    '<div>' +
+    '<label style="display: block; font-size: 13px; font-weight: 500; color: #4a5568; margin-bottom: 5px;">Tình trạng</label>' +
+    '<select id="loanStatusFilter" class="form-control" onchange="renderLoanPage()">' +
+    '<option value="">Tất cả</option>' +
+    '<option value="active"' + (loanFilters.status === 'active' ? ' selected' : '') + '>Đang vay</option>' +
+    '<option value="completed"' + (loanFilters.status === 'completed' ? ' selected' : '') + '>Đã trả hết</option>' +
+    '<option value="overdue"' + (loanFilters.status === 'overdue' ? ' selected' : '') + '>Quá hạn</option>' +
+    '</select>' +
+    '</div>' +
+    '</div>' +
+    '<div style="text-align: right;">' +
+    '<button class="btn-secondary btn-sm" onclick="clearLoanFilters()">' +
+    '<i class="fas fa-times"></i> Xóa bộ lọc' +
+    '</button>' +
+    '</div>' +
+    '</div>' +
+    
+    // Summary cards
+    renderLoanSummary() +
+    
+    // Table
+    '<div style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">' +
+    '<div style="color: #6b7280; font-size: 14px;">Hiển thị ' + 
+    (loanFilteredData.length === 0 ? 0 : (startIndex + 1)) + '-' + endIndex + ' trong tổng số ' + loanFilteredData.length + ' bản ghi</div>' +
+    '<div style="display: flex; align-items: center; gap: 10px;">' +
+    '<label style="font-size: 14px; color: #4a5568;">Hiển thị:</label>' +
+    '<select class="form-control" style="width: 80px; padding: 6px 10px;" onchange="changeLoanItemsPerPage(this.value)">' +
+    '<option value="10"' + (loanItemsPerPage === 10 ? ' selected' : '') + '>10</option>' +
+    '<option value="20"' + (loanItemsPerPage === 20 ? ' selected' : '') + '>20</option>' +
+    '<option value="50"' + (loanItemsPerPage === 50 ? ' selected' : '') + '>50</option>' +
+    '<option value="100"' + (loanItemsPerPage === 100 ? ' selected' : '') + '>100</option>' +
+    '</select>' +
+    '</div>' +
+    '</div>' +
+    
+    '<div style="overflow-x: auto; max-height: calc(100vh - 400px); overflow-y: auto;">' +
+    '<table>' +
+    '<thead>' +
+    '<tr>' +
+    '<th class="sticky-column" style="min-width: 180px;">DANH MỤC VAY</th>' +
+    '<th style="min-width: 120px;">NGÀY VAY</th>' +
+    '<th style="min-width: 120px;">HẠN TRẢ</th>' +
+    '<th style="min-width: 140px;">GIÁ TRỊ VAY</th>' +
+    '<th style="min-width: 100px;">LÃI SUẤT</th>' +
+    '<th style="min-width: 140px;">GỐC/THÁNG</th>' +
+    '<th style="min-width: 140px;">LÃI/THÁNG</th>' +
+    '<th style="min-width: 160px;">GỐC ĐÃ TRẢ</th>' +
+    '<th style="min-width: 140px;">CÒN LẠI</th>' +
+    '<th style="min-width: 120px;">TÌNH TRẠNG</th>' +
+    '<th style="min-width: 180px;">HÀNH ĐỘNG</th>' +
+    '</tr>' +
+    '</thead>' +
+    '<tbody>' +
+    renderLoanTableWithPagination() +
+    '</tbody>' +
+    '</table>' +
+    '</div>' +
+    
+    // Pagination
+    renderLoanPagination(totalPages) +
+    
+    '</div>';
+  
+  document.getElementById('contentWrapper').innerHTML = html;
+  
+  console.log('✅ Loan page rendered');
+  
+  // Check and display notifications
+  checkLoanNotifications();
+}
+/**
+ * Render loan summary cards
+ */
+function renderLoanSummary() {
+  var totalPrincipal = 0;
+  var totalMonthlyPayment = 0;
+  var totalInterest = 0;
+  var totalPaid = 0;
+  var totalRemaining = 0;
+  
+  for (var i = 0; i < loanFilteredData.length; i++) {
+    var principal = parseCurrency(loanFilteredData[i]['Giá trị vay']);
+    var monthlyPrincipal = parseCurrency(loanFilteredData[i]['Tiền gốc trả hàng tháng']);
+    var monthlyInterest = parseCurrency(loanFilteredData[i]['Tiền lãi trả hàng tháng']);
+    var paid = parseCurrency(loanFilteredData[i]['Tiền gốc đã trả']);
+    var remaining = parseCurrency(loanFilteredData[i]['Tiền vay còn lại']);
+    
+    totalPrincipal += principal;
+    totalMonthlyPayment += (monthlyPrincipal + monthlyInterest);
+    totalInterest += monthlyInterest;
+    totalPaid += paid;
+    totalRemaining += remaining;
+  }
+  
+  var paymentPercent = totalPrincipal > 0 ? Math.round((totalPaid / totalPrincipal) * 100) : 0;
+  
+  return '<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px;">' +
+    '<div style="display: flex; align-items: center; justify-content: center; margin-bottom: 15px; color: white;">' +
+    '<i class="fas fa-calculator" style="font-size: 24px; margin-right: 10px;"></i>' +
+    '<h3 style="margin: 0; font-size: 18px;">TỔNG HỢP KHOẢN VAY</h3>' +
+    '</div>' +
+    '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">' +
+    '<div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; backdrop-filter: blur(10px);">' +
+    '<div style="color: rgba(255,255,255,0.8); font-size: 12px; margin-bottom: 5px;">Tổng giá trị vay</div>' +
+    '<div style="color: white; font-size: 20px; font-weight: 700;">' + formatCurrency(totalPrincipal) + ' đ</div>' +
+    '</div>' +
+    '<div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; backdrop-filter: blur(10px);">' +
+    '<div style="color: rgba(255,255,255,0.8); font-size: 12px; margin-bottom: 5px;">Trả/tháng</div>' +
+    '<div style="color: white; font-size: 20px; font-weight: 700;">' + formatCurrency(totalMonthlyPayment) + ' đ</div>' +
+    '</div>' +
+    '<div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; backdrop-filter: blur(10px);">' +
+    '<div style="color: rgba(255,255,255,0.8); font-size: 12px; margin-bottom: 5px;">Lãi/tháng</div>' +
+    '<div style="color: white; font-size: 20px; font-weight: 700;">' + formatCurrency(totalInterest) + ' đ</div>' +
+    '</div>' +
+    '<div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; backdrop-filter: blur(10px);">' +
+    '<div style="color: rgba(255,255,255,0.8); font-size: 12px; margin-bottom: 5px;">Gốc đã trả</div>' +
+    '<div style="color: #4ade80; font-size: 20px; font-weight: 700;">' + formatCurrency(totalPaid) + ' đ</div>' +
+    '</div>' +
+    '<div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; backdrop-filter: blur(10px);">' +
+    '<div style="color: rgba(255,255,255,0.8); font-size: 12px; margin-bottom: 5px;">Còn lại</div>' +
+    '<div style="color: #fbbf24; font-size: 20px; font-weight: 700;">' + formatCurrency(totalRemaining) + ' đ</div>' +
+    '</div>' +
+    '<div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; backdrop-filter: blur(10px);">' +
+    '<div style="color: rgba(255,255,255,0.8); font-size: 12px; margin-bottom: 5px;">Tỷ lệ hoàn thành</div>' +
+    '<div style="color: white; font-size: 20px; font-weight: 700;">' + paymentPercent + '%</div>' +
+    '</div>' +
+    '</div>' +
+    '</div>';
+}
+
+/**
+ * Apply loan filters
+ */
+function applyLoanFilters() {
+  loanFilters.fromDate = document.getElementById('loanFromDate') ? document.getElementById('loanFromDate').value : '';
+  loanFilters.toDate = document.getElementById('loanToDate') ? document.getElementById('loanToDate').value : '';
+  loanFilters.loanName = document.getElementById('loanNameFilter') ? document.getElementById('loanNameFilter').value.toLowerCase() : '';
+  loanFilters.status = document.getElementById('loanStatusFilter') ? document.getElementById('loanStatusFilter').value : '';
+  
+  loanFilteredData = allLoanData.filter(function(item) {
+    var loanDate = item['Ngày vay'] || '';
+    var loanName = (item['Danh mục vay'] || '').toLowerCase();
+    var status = item['Tình trạng'] || 'active';
+    
+    if (loanFilters.fromDate && loanDate < loanFilters.fromDate) return false;
+    if (loanFilters.toDate && loanDate > loanFilters.toDate) return false;
+    if (loanFilters.loanName && loanName.indexOf(loanFilters.loanName) === -1) return false;
+    if (loanFilters.status && status !== loanFilters.status) return false;
+    
+    return true;
+  });
+  
+  loanCurrentPage = 1;
+}
+
+/**
+ * Clear loan filters
+ */
+function clearLoanFilters() {
+  loanFilters = {
+    fromDate: '',
+    toDate: '',
+    loanName: '',
+    status: ''
+  };
+  
+  // Reset input fields if exist
+  if (document.getElementById('loanFromDate')) document.getElementById('loanFromDate').value = '';
+  if (document.getElementById('loanToDate')) document.getElementById('loanToDate').value = '';
+  if (document.getElementById('loanNameFilter')) document.getElementById('loanNameFilter').value = '';
+  if (document.getElementById('loanStatusFilter')) document.getElementById('loanStatusFilter').value = '';
+  
+  loanFilteredData = allLoanData.slice();
+  loanCurrentPage = 1;
+  
+  renderLoanPage();
+}
+
+/**
+ * Change items per page
+ */
+function changeLoanItemsPerPage(value) {
+  loanItemsPerPage = parseInt(value);
+  loanCurrentPage = 1;
+  renderLoanPage();
+}
+
+/**
+ * Go to specific page
+ * @param {number} page - Page number
+ */
+function loanGoToPage(page) {
+  loanCurrentPage = page;
+  renderLoanPage();
+  window.scrollTo(0, 0);
+}
+
+
+/**
+ * Render loan table with pagination + TOTALS ROW
+ * @return {string} HTML table rows
+ */
+function renderLoanTableWithPagination() {
+  console.log('Rendering loan table, filtered data:', loanFilteredData.length);
+  
+  if (!loanFilteredData || loanFilteredData.length === 0) {
+    return '<tr><td colspan="11" class="text-center" style="padding: 40px; color: #9ca3af;">' +
+      '<i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px; opacity: 0.5;"></i>' +
+      '<div>Chưa có khoản vay nào</div>' +
+      '</td></tr>';
+  }
+  
+  var startIndex = (loanCurrentPage - 1) * loanItemsPerPage;
+  var endIndex = Math.min(startIndex + loanItemsPerPage, loanFilteredData.length);
+  
+  console.log('Rendering from', startIndex, 'to', endIndex);
+  
+  // Calculate totals for ALL filtered data (not just current page)
+  var totalPrincipal = 0;
+  var totalMonthlyPrincipal = 0;
+  var totalMonthlyInterest = 0;
+  var totalPaidPrincipal = 0;
+  var totalRemaining = 0;
+  
+  for (var i = 0; i < loanFilteredData.length; i++) {
+    totalPrincipal += parseCurrency(loanFilteredData[i]['Giá trị vay']);
+    totalMonthlyPrincipal += parseCurrency(loanFilteredData[i]['Tiền gốc trả hàng tháng']);
+    totalMonthlyInterest += parseCurrency(loanFilteredData[i]['Tiền lãi trả hàng tháng']);
+    totalPaidPrincipal += parseCurrency(loanFilteredData[i]['Tiền gốc đã trả']);
+    totalRemaining += parseCurrency(loanFilteredData[i]['Tiền vay còn lại']);
+  }
+  
+  var html = '';
+  
+  // Render data rows
+  for (var i = startIndex; i < endIndex; i++) {
+    var item = loanFilteredData[i];
+    var id = item.ID || 'N/A';
+    
+    console.log('Rendering loan item:', item);
+    
+    // Parse values
+    var loanName = item['Danh mục vay'] || 'N/A';
+    var loanDate = item['Ngày vay'] || '';
+    var dueDate = item['Hạn trả vay'] || '';
+    var principal = parseCurrency(item['Giá trị vay']);
+    var annualRate = parseFloat(item['Lãi suất vay/năm']) || 0;
+    var monthlyPrincipal = parseCurrency(item['Tiền gốc trả hàng tháng']);
+    var monthlyInterest = parseCurrency(item['Tiền lãi trả hàng tháng']);
+    var paidPrincipal = parseCurrency(item['Tiền gốc đã trả']);
+    var remaining = parseCurrency(item['Tiền vay còn lại']);
+    var status = item['Tình trạng'] || 'active';
+    
+    // Status badge
+    var statusBadge = 'badge-info';
+    var statusText = 'Đang vay';
+    var statusIcon = 'fa-clock';
+    
+    if (status === 'completed') {
+      statusBadge = 'badge-success';
+      statusText = 'Đã trả hết';
+      statusIcon = 'fa-check-circle';
+    } else if (status === 'overdue') {
+      statusBadge = 'badge-danger';
+      statusText = 'Quá hạn';
+      statusIcon = 'fa-exclamation-triangle';
+    }
+    
+    // Progress calculation
+    var progress = principal > 0 ? Math.round((paidPrincipal / principal) * 100) : 0;
+    var progressColor = progress >= 100 ? '#24c560' : progress >= 75 ? '#3782f4' : progress >= 50 ? '#f59e0b' : '#e94849';
+    
+    html += '<tr>' +
+      // Danh mục vay (sticky column)
+      '<td class="sticky-column" style="font-weight: 600;">' + loanName + '</td>' +
+      
+      // Ngày vay
+      '<td>' + formatDate(loanDate) + '</td>' +
+      
+      // Hạn trả
+      '<td>' + formatDate(dueDate) + '</td>' +
+      
+      // Giá trị vay
+      '<td style="color: #e94849; font-weight: 600;">' + formatCurrency(principal) + ' đ</td>' +
+      
+      // Lãi suất
+      '<td>' + annualRate.toFixed(2) + '%/năm</td>' +
+      
+      // Gốc/tháng
+      '<td style="color: #3782f4; font-weight: 600;">' + formatCurrency(monthlyPrincipal) + ' đ</td>' +
+      
+      // Lãi/tháng
+      '<td style="color: #f59e0b; font-weight: 600;">' + formatCurrency(monthlyInterest) + ' đ</td>' +
+      
+      // Gốc đã trả + Progress bar
+      '<td>' +
+      '<div style="margin-bottom: 5px; font-weight: 600; color: #24c560;">' + formatCurrency(paidPrincipal) + ' đ</div>' +
+      '<div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;">' +
+      '<div style="background: ' + progressColor + '; width: ' + Math.min(progress, 100) + '%; height: 100%;"></div>' +
+      '</div>' +
+      '<div style="font-size: 11px; color: #718096; margin-top: 2px;">' + progress + '%</div>' +
+      '</td>' +
+      
+      // Còn lại
+      '<td style="color: ' + (remaining > 0 ? '#e94849' : '#24c560') + '; font-weight: 600;">' + 
+      formatCurrency(remaining) + ' đ</td>' +
+      
+      // Tình trạng
+      '<td>' +
+      '<span class="badge ' + statusBadge + '">' +
+      '<i class="fas ' + statusIcon + '"></i> ' + statusText +
+      '</span>' +
+      '</td>' +
+      
+      // Hành động
+      '<td class="action-buttons" style="white-space: nowrap;">' +
+      '<button class="btn-primary btn-sm" onclick="viewLoanDetails(\'' + id + '\')" title="Xem chi tiết">' +
+      '<i class="fas fa-eye"></i>' +
+      '</button>' +
+      '<button class="btn-success btn-sm" onclick="markPayment(\'' + id + '\')" title="Thanh toán">' +
+      '<i class="fas fa-money-bill"></i>' +
+      '</button>' +
+      '<button class="btn-warning btn-sm" onclick="editLoan(\'' + id + '\')" title="Sửa">' +
+      '<i class="fas fa-edit"></i>' +
+      '</button>' +
+      '<button class="btn-danger btn-sm" onclick="confirmDeleteLoan(\'' + id + '\')" title="Xóa">' +
+      '<i class="fas fa-trash"></i>' +
+      '</button>' +
+      '</td>' +
+      '</tr>';
+  }
+  
+  // TOTALS ROW
+  html += '<tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: 700; border-top: 3px solid #667eea;">' +
+    '<td class="sticky-column" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: 700;">' +
+    '<i class="fas fa-calculator"></i> TỔNG CỘNG' +
+    '</td>' +
+    '<td colspan="2" style="text-align: center;">' + loanFilteredData.length + ' khoản</td>' +
+    '<td style="font-size: 15px;">' + formatCurrency(totalPrincipal) + ' đ</td>' +
+    '<td></td>' +
+    '<td style="font-size: 15px;">' + formatCurrency(totalMonthlyPrincipal) + ' đ</td>' +
+    '<td style="font-size: 15px;">' + formatCurrency(totalMonthlyInterest) + ' đ</td>' +
+    '<td style="font-size: 15px;">' + formatCurrency(totalPaidPrincipal) + ' đ</td>' +
+    '<td style="font-size: 15px;">' + formatCurrency(totalRemaining) + ' đ</td>' +
+    '<td colspan="2"></td>' +
+    '</tr>';
+  
+  return html;
+}
+
+/**
+ * Render loan pagination controls
+ * @param {number} totalPages - Total number of pages
+ * @return {string} HTML pagination
+ */
+function renderLoanPagination(totalPages) {
+  if (totalPages <= 1) return '';
+  
+  var html = '<div style="display: flex; justify-content: center; align-items: center; margin-top: 20px; gap: 10px;">';
+  
+  // Previous button
+  html += '<button class="btn-secondary btn-sm" onclick="loanGoToPage(' + (loanCurrentPage - 1) + ')" ' + 
+    (loanCurrentPage === 1 ? 'disabled' : '') + '>' +
+    '<i class="fas fa-chevron-left"></i>' +
+    '</button>';
+  
+  // Page numbers
+  var startPage = Math.max(1, loanCurrentPage - 2);
+  var endPage = Math.min(totalPages, loanCurrentPage + 2);
+  
+  if (startPage > 1) {
+    html += '<button class="btn-secondary btn-sm" onclick="loanGoToPage(1)">1</button>';
+    if (startPage > 2) html += '<span style="padding: 0 10px; color: #718096;">...</span>';
+  }
+  
+  for (var i = startPage; i <= endPage; i++) {
+    if (i === loanCurrentPage) {
+      html += '<button class="btn-primary btn-sm" disabled>' + i + '</button>';
+    } else {
+      html += '<button class="btn-secondary btn-sm" onclick="loanGoToPage(' + i + ')">' + i + '</button>';
+    }
+  }
+  
+  if (endPage < totalPages) {
+    if (endPage < totalPages - 1) html += '<span style="padding: 0 10px; color: #718096;">...</span>';
+    html += '<button class="btn-secondary btn-sm" onclick="loanGoToPage(' + totalPages + ')">' + totalPages + '</button>';
+  }
+  
+  // Next button
+  html += '<button class="btn-secondary btn-sm" onclick="loanGoToPage(' + (loanCurrentPage + 1) + ')" ' + 
+    (loanCurrentPage === totalPages ? 'disabled' : '') + '>' +
+    '<i class="fas fa-chevron-right"></i>' +
+    '</button>';
+  
+  html += '</div>';
+  
+  return html;
+}
+
+// ========================================
+// LOAN MODAL - ADD/EDIT WITH CALCULATOR
+// ========================================
+
+/**
+ * Open loan modal for add/edit
+ * @param {string} id - Loan ID (null for add new)
+ */
+function openLoanModal(id) {
+  console.log('=== OPENING LOAN MODAL ===', id ? 'EDIT' : 'CREATE');
+  
+  var isEdit = !!id;
+  var item = {};
+  
+  if (isEdit) {
+    const loanList = DataManager.isInitialized && DataManager.isInitialized() ? 
+      DataManager.getLoan() : allLoanData;
+    item = loanList.find(function(i) { return i.ID === id; }) || {};
+    
+    if (!item.ID) {
+      showToast('Không tìm thấy khoản vay', 'error');
+      return;
+    }
+  }
+  
+  // Parse existing data
+  var loanName = item['Danh mục vay'] || '';
+  var loanDate = item['Ngày vay'] || new Date().toISOString().split('T')[0];
+  var principal = isEdit ? parseCurrency(item['Giá trị vay']) : 0;
+  var annualRate = isEdit ? parseFloat(item['Lãi suất vay/năm']) : 0;
+  var months = 12; // Default
+  var interestType = 'declining'; // Default
+  
+  // Parse details to get months and interest type
+  if (isEdit && item['Chi tiết khoản vay']) {
+    try {
+      var details = typeof item['Chi tiết khoản vay'] === 'string' ? 
+        JSON.parse(item['Chi tiết khoản vay']) : item['Chi tiết khoản vay'];
+      
+      if (details) {
+        months = details.months || 12;
+        interestType = details.interestType || 'declining';
+      }
+    } catch(e) {
+      console.error('Parse details error:', e);
+    }
+  }
+  
+  // Build modal HTML
+  var body = 
+    '<form id="loanForm" onsubmit="handleSaveLoan(event, \'' + (id || '') + '\')">' +
+    
+    // Basic Info
+    '<div style="background: #f0f9ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 3px solid #3782f4;">' +
+    '<h4 style="margin: 0 0 10px 0; color: #1e40af;"><i class="fas fa-info-circle"></i> Thông tin cơ bản</h4>' +
+    
+    '<div class="form-row">' +
+    '<div class="form-group">' +
+    '<label><i class="fas fa-tag"></i> Tên khoản vay <span style="color: red;">*</span></label>' +
+    '<input type="text" id="loanName" name="Danh mục vay" class="form-control" value="' + loanName + '" ' +
+    'placeholder="VD: Vay mua nhà, Vay tiêu dùng..." required>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-calendar"></i> Ngày vay <span style="color: red;">*</span></label>' +
+    '<input type="date" id="loanDate" name="Ngày vay" class="form-control" value="' + loanDate + '" required>' +
+    '</div>' +
+    '</div>' +
+    
+    '</div>' +
+    
+    // Loan Calculation
+    '<div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 3px solid #f59e0b;">' +
+    '<h4 style="margin: 0 0 10px 0; color: #92400e;"><i class="fas fa-calculator"></i> Tính toán khoản vay</h4>' +
+    
+    '<div class="form-row">' +
+    '<div class="form-group">' +
+    '<label><i class="fas fa-money-bill-wave"></i> Số tiền vay (VNĐ) <span style="color: red;">*</span></label>' +
+    '<input type="text" id="loanPrincipal" class="form-control currency-input" value="' + 
+    (isEdit ? formatCurrency(principal) : '0') + '" required oninput="calculateLoanPreview()">' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-percentage"></i> Lãi suất (%/năm) <span style="color: red;">*</span></label>' +
+    '<input type="number" id="loanRate" class="form-control" value="' + annualRate + '" ' +
+    'step="0.01" min="0" max="100" required oninput="calculateLoanPreview()">' +
+    '</div>' +
+    '</div>' +
+    
+    '<div class="form-row">' +
+    '<div class="form-group">' +
+    '<label><i class="fas fa-clock"></i> Kỳ hạn (tháng) <span style="color: red;">*</span></label>' +
+    '<input type="number" id="loanMonths" class="form-control" value="' + months + '" ' +
+    'min="1" max="360" required oninput="calculateLoanPreview()">' +
+    '<small style="color: #78350f;">Tối đa 360 tháng (30 năm)</small>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-chart-line"></i> Hình thức lãi suất <span style="color: red;">*</span></label>' +
+    '<select id="loanInterestType" class="form-control" onchange="calculateLoanPreview()">' +
+    '<option value="declining"' + (interestType === 'declining' ? ' selected' : '') + '>Lãi giảm dần (Phổ biến nhất)</option>' +
+    '<option value="simple"' + (interestType === 'simple' ? ' selected' : '') + '>Lãi đơn</option>' +
+    '<option value="compound"' + (interestType === 'compound' ? ' selected' : '') + '>Lãi kép</option>' +
+    '</select>' +
+    '<small id="interestTypeDescription" style="color: #78350f; display: block; margin-top: 5px;"></small>' +
+    '</div>' +
+    '</div>' +
+    
+    '</div>' +
+    
+    // Preview Results
+    '<div id="loanPreview" style="background: #f0fdf4; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 3px solid #24c560; display: none;">' +
+    '<h4 style="margin: 0 0 15px 0; color: #166534;"><i class="fas fa-chart-bar"></i> Dự tính trả nợ</h4>' +
+    
+    '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">' +
+    '<div style="background: white; padding: 12px; border-radius: 8px;">' +
+    '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Gốc hàng tháng</div>' +
+    '<div id="previewMonthlyPrincipal" style="font-size: 18px; font-weight: 700; color: #3782f4;">0 đ</div>' +
+    '</div>' +
+    
+    '<div style="background: white; padding: 12px; border-radius: 8px;">' +
+    '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Lãi hàng tháng</div>' +
+    '<div id="previewMonthlyInterest" style="font-size: 18px; font-weight: 700; color: #f59e0b;">0 đ</div>' +
+    '</div>' +
+    
+    '<div style="background: white; padding: 12px; border-radius: 8px;">' +
+    '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Tổng trả hàng tháng</div>' +
+    '<div id="previewMonthlyTotal" style="font-size: 18px; font-weight: 700; color: #24c560;">0 đ</div>' +
+    '</div>' +
+    
+    '<div style="background: white; padding: 12px; border-radius: 8px;">' +
+    '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Tổng lãi phải trả</div>' +
+    '<div id="previewTotalInterest" style="font-size: 18px; font-weight: 700; color: #e94849;">0 đ</div>' +
+    '</div>' +
+    '</div>' +
+    
+    '</div>' +
+    
+    // Important Notes
+    '<div style="background: #fffbeb; padding: 12px; border-radius: 8px; border-left: 3px solid #f59e0b;">' +
+    '<strong style="color: #92400e;"><i class="fas fa-lightbulb"></i> Lưu ý:</strong>' +
+    '<ul style="margin: 8px 0 0 0; padding-left: 20px; font-size: 13px; color: #78350f;">' +
+    '<li><strong>Lãi giảm dần:</strong> Lãi tính trên số dư nợ còn lại → Phổ biến nhất (ngân hàng, mua nhà)</li>' +
+    '<li><strong>Lãi đơn:</strong> Lãi tính cố định trên gốc ban đầu → Dễ tính, ổn định</li>' +
+    '<li><strong>Lãi kép:</strong> Lãi tính trên cả gốc + lãi tích lũy → Chi phí cao nhất</li>' +
+    '<li>Hệ thống sẽ tự động tạo lịch trả nợ chi tiết sau khi lưu</li>' +
+    '</ul>' +
+    '</div>' +
+    
+    '</form>';
+  
+  var footer = 
+    '<button type="button" class="btn-secondary" onclick="closeModal()">' +
+    '<i class="fas fa-times"></i> Hủy' +
+    '</button>' +
+    '<button type="button" class="btn-primary" onclick="document.getElementById(\'loanForm\').requestSubmit()">' +
+    '<i class="fas fa-save"></i> ' + (isEdit ? 'Cập nhật' : 'Tạo khoản vay') +
+    '</button>';
+  
+  openModal(
+    isEdit ? '✏️ Sửa khoản vay' : '➕ Thêm khoản vay mới', 
+    body, 
+    footer
+  );
+  
+  // Initialize after modal opens
+  setTimeout(function() {
+    console.log('🔧 Initializing loan modal...');
+    
+    // Setup currency input
+    setupCurrencyInput(document.getElementById('loanPrincipal'));
+    
+    // Calculate preview if editing
+    if (isEdit) {
+      calculateLoanPreview();
+    }
+    
+    // Update interest type description
+    updateInterestTypeDescription();
+    
+    // Focus first input
+    document.getElementById('loanName').focus();
+    
+    console.log('✅ Loan modal initialized');
+  }, 100);
+}
+
+/**
+ * Calculate loan preview in real-time
+ */
+function calculateLoanPreview() {
+  var principal = parseCurrency(document.getElementById('loanPrincipal').value);
+  var annualRate = parseFloat(document.getElementById('loanRate').value) || 0;
+  var months = parseInt(document.getElementById('loanMonths').value) || 0;
+  var interestType = document.getElementById('loanInterestType').value;
+  
+  if (principal <= 0 || months <= 0) {
+    document.getElementById('loanPreview').style.display = 'none';
+    return;
+  }
+  
+  // Calculate based on interest type
+  var monthlyPrincipal = 0;
+  var monthlyInterest = 0;
+  var totalInterest = 0;
+  
+  if (interestType === 'declining') {
+    // Lãi giảm dần: PMT formula
+    if (annualRate === 0) {
+      monthlyPrincipal = Math.round(principal / months);
+      monthlyInterest = 0;
+      totalInterest = 0;
+    } else {
+      var monthlyRate = annualRate / 12 / 100;
+      var monthlyPayment = principal * (monthlyRate * Math.pow(1 + monthlyRate, months)) / 
+                          (Math.pow(1 + monthlyRate, months) - 1);
+      
+      monthlyPayment = Math.round(monthlyPayment);
+      
+      // Estimate average interest (first month)
+      monthlyInterest = Math.round(principal * monthlyRate);
+      monthlyPrincipal = monthlyPayment - monthlyInterest;
+      
+      // Total interest = total payment - principal
+      totalInterest = Math.round(monthlyPayment * months - principal);
+    }
+    
+  } else if (interestType === 'simple') {
+    // Lãi đơn
+    totalInterest = Math.round(principal * (annualRate / 100) * (months / 12));
+    var totalPayment = principal + totalInterest;
+    var monthlyPayment = Math.round(totalPayment / months);
+    monthlyPrincipal = Math.round(principal / months);
+    monthlyInterest = Math.round(totalInterest / months);
+    
+  } else if (interestType === 'compound') {
+    // Lãi kép
+    var monthlyRate = annualRate / 12 / 100;
+    var futureValue = principal * Math.pow(1 + monthlyRate, months);
+    totalInterest = Math.round(futureValue - principal);
+    var monthlyPayment = Math.round(futureValue / months);
+    monthlyPrincipal = Math.round(principal / months);
+    monthlyInterest = Math.round(totalInterest / months);
+  }
+  
+  // Update UI
+  document.getElementById('loanPreview').style.display = 'block';
+  document.getElementById('previewMonthlyPrincipal').textContent = formatCurrency(monthlyPrincipal) + ' đ';
+  document.getElementById('previewMonthlyInterest').textContent = formatCurrency(monthlyInterest) + ' đ';
+  document.getElementById('previewMonthlyTotal').textContent = formatCurrency(monthlyPrincipal + monthlyInterest) + ' đ';
+  document.getElementById('previewTotalInterest').textContent = formatCurrency(totalInterest) + ' đ';
+  
+  console.log('Preview calculated:', {
+    principal: principal,
+    rate: annualRate,
+    months: months,
+    type: interestType,
+    monthlyPrincipal: monthlyPrincipal,
+    monthlyInterest: monthlyInterest,
+    totalInterest: totalInterest
+  });
+}
+
+/**
+ * Update interest type description
+ */
+function updateInterestTypeDescription() {
+  var interestType = document.getElementById('loanInterestType').value;
+  var desc = '';
+  
+  if (interestType === 'declining') {
+    desc = '✅ Được khuyên dùng - Lãi giảm dần theo số nợ còn lại';
+  } else if (interestType === 'simple') {
+    desc = 'Lãi tính cố định trên số gốc ban đầu';
+  } else if (interestType === 'compound') {
+    desc = '⚠️ Chi phí cao - Lãi tính trên cả gốc và lãi tích lũy';
+  }
+  
+  var descEl = document.getElementById('interestTypeDescription');
+  if (descEl) {
+    descEl.textContent = desc;
+  }
+  
+  // Trigger preview recalculation
+  calculateLoanPreview();
+}
+
+// ========================================
+// SAVE LOAN - CREATE/UPDATE WITH SCHEDULE
+// ========================================
+
+/**
+ * Handle save loan (create or update)
+ * @param {Event} event - Form submit event
+ * @param {string} id - Loan ID (empty for create)
+ */
+async function handleSaveLoan(event, id) {
+  event.preventDefault();
+  
+  console.log('=== SAVING LOAN ===', id ? 'UPDATE' : 'CREATE');
+  
+  // Collect form data
+  var loanName = document.getElementById('loanName').value.trim();
+  var loanDate = document.getElementById('loanDate').value;
+  var principal = parseCurrency(document.getElementById('loanPrincipal').value);
+  var annualRate = parseFloat(document.getElementById('loanRate').value);
+  var months = parseInt(document.getElementById('loanMonths').value);
+  var interestType = document.getElementById('loanInterestType').value;
+  
+  // Validate
+  if (!loanName || !loanDate || principal <= 0 || annualRate < 0 || months <= 0) {
+    showToast('Vui lòng nhập đầy đủ thông tin', 'error');
+    return;
+  }
+  
+  console.log('Loan data:', {
+    name: loanName,
+    date: loanDate,
+    principal: principal,
+    rate: annualRate,
+    months: months,
+    type: interestType
+  });
+  
+  closeModal();
+  showLoading('Đang tính toán lịch trả nợ...');
+  
+  try {
+    // Step 1: Calculate loan schedule from backend
+    console.log('Step 1: Calling backend to calculate schedule...');
+    
+    const scheduleResponse = await new Promise(function(resolve, reject) {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject)
+        .handleRequest('calculateLoanSchedule', {
+          loanData: {
+            principal: principal,
+            annualRate: annualRate,
+            months: months,
+            interestType: interestType,
+            startDate: loanDate
+          }
+        });
+    });
+    
+    console.log('Schedule response:', scheduleResponse);
+    
+    if (!scheduleResponse.success) {
+      throw new Error(scheduleResponse.message || 'Không thể tính lịch trả nợ');
+    }
+    
+    const schedule = scheduleResponse.data;
+    console.log('Schedule calculated:', schedule.length, 'periods');
+    
+    // Calculate monthly amounts from schedule
+    var firstPeriod = schedule[0];
+    var monthlyPrincipal = firstPeriod.principalPayment || 0;
+    var monthlyInterest = firstPeriod.interestPayment || 0;
+    
+    // Calculate due date (last period)
+    var lastPeriod = schedule[schedule.length - 1];
+    var dueDate = lastPeriod.dueDate;
+    
+    console.log('Calculated:', {
+      monthlyPrincipal: monthlyPrincipal,
+      monthlyInterest: monthlyInterest,
+      dueDate: dueDate
+    });
+    
+    // Step 2: Build record data
+    var recordData = {
+      'ID': id || generateId('KV'),
+      'UserID': currentUser.userId,
+      'Ngày vay': loanDate,
+      'Hạn trả vay': dueDate,
+      'Danh mục vay': loanName,
+      'Giá trị vay': principal,
+      'Lãi suất vay/năm': annualRate,
+      'Tiền gốc trả hàng tháng': monthlyPrincipal,
+      'Tiền lãi trả hàng tháng': monthlyInterest,
+      'Tiền gốc đã trả': 0,
+      'Tiền vay còn lại': principal,
+      'Tình trạng': 'active',
+      'Chi tiết khoản vay': JSON.stringify({
+        months: months,
+        interestType: interestType,
+        schedule: schedule,
+        createdAt: new Date().toISOString()
+      })
+    };
+    
+    console.log('Record data:', recordData);
+    
+    // Step 3: Save to backend
+    console.log('Step 2: Saving to backend...');
+    
+    var action = id ? 'updateRecord' : 'createRecord';
+    var params = id ? 
+      {sheetName: 'Khoản vay', id: id, data: recordData} : 
+      {sheetName: 'Khoản vay', data: recordData};
+    
+    const saveResponse = await new Promise(function(resolve, reject) {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject)
+        .handleRequest(action, params);
+    });
+    
+    console.log('Save response:', saveResponse);
+    
+    if (!saveResponse.success) {
+      throw new Error(saveResponse.message || 'Không thể lưu khoản vay');
+    }
+    
+    // Step 4: Reload data
+    console.log('Step 3: Reloading loan data...');
+    await reloadLoanData();
+    
+    hideLoading();
+    showToast('✅ Đã ' + (id ? 'cập nhật' : 'tạo') + ' khoản vay thành công!', 'success');
+    
+    console.log('✅ Save loan completed');
+    
+  } catch (error) {
+    console.error('❌ Save loan error:', error);
+    hideLoading();
+    showToast('Lỗi: ' + error.message, 'error');
+  }
+}
+
+/**
+ * Reload loan data from backend
+ */
+async function reloadLoanData() {
+  try {
+    console.log('Reloading loan data...');
+    
+    // Use DataManager if available
+    if (DataManager && DataManager.isInitialized && DataManager.isInitialized()) {
+      await DataManager.refresh('Khoản vay');
+      allLoanData = DataManager.getLoan();
+    } else {
+      // Fallback to direct load
+      const result = await new Promise(function(resolve, reject) {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .getRecords('Khoản vay');
+      });
+      
+      if (result.success) {
+        allLoanData = result.data;
+      }
+    }
+    
+    loanFilteredData = allLoanData.slice();
+    loanCurrentPage = 1;
+    
+    console.log('✅ Loan data reloaded:', allLoanData.length, 'records');
+    
+    renderLoanPage();
+    
+  } catch (error) {
+    console.error('Reload loan data error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Open edit loan modal
+ * @param {string} id - Loan ID
+ */
+function editLoan(id) {
+  openLoanModal(id);
+}
+
+/**
+ * Confirm delete loan
+ * @param {string} id - Loan ID
+ */
+function confirmDeleteLoan(id) {
+  var loan = null;
+  var loanList = DataManager.isInitialized && DataManager.isInitialized() ? 
+    DataManager.getLoan() : allLoanData;
+  
+  for (var i = 0; i < loanList.length; i++) {
+    if (loanList[i].ID === id) {
+      loan = loanList[i];
+      break;
+    }
+  }
+  
+  if (!loan) {
+    showToast('Không tìm thấy khoản vay', 'error');
+    return;
+  }
+  
+  var body = '<div style="padding: 20px; text-align: center;">' +
+    '<i class="fas fa-exclamation-triangle" style="font-size: 48px; color: #f59e0b; margin-bottom: 15px;"></i>' +
+    '<p style="font-size: 16px; color: #1f2937; margin-bottom: 10px;">Bạn có chắc muốn xóa khoản vay:</p>' +
+    '<p style="font-size: 18px; font-weight: 600; color: #e94849; margin-bottom: 20px;">"' + loan['Danh mục vay'] + '"?</p>' +
+    '<p style="color: #e94849;">⚠️ Hành động này không thể hoàn tác!</p>' +
+    '</div>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-danger" onclick="executeDeleteLoan(\'' + id + '\')">Xóa</button>';
+  
+  openModal('⚠️ Xác nhận xóa', body, footer);
+}
+
+/**
+ * Execute delete loan
+ * @param {string} id - Loan ID
+ */
+function executeDeleteLoan(id) {
+  closeModal();
+  showLoading('Đang xóa...');
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response.success) {
+        reloadLoanData().then(function() {
+          hideLoading();
+          showToast('✅ Đã xóa khoản vay', 'success');
+        }).catch(function(error) {
+          hideLoading();
+          showToast('Lỗi tải lại dữ liệu', 'error');
+        });
+      } else {
+        hideLoading();
+        showToast(response.message || 'Xóa thất bại', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .handleRequest('deleteRecord', {sheetName: 'Khoản vay', id: id});
+}
+
+
+
+// ========================================
+// VIEW LOAN DETAILS - PAYMENT SCHEDULE
+// ========================================
+
+/**
+ * View loan details with payment schedule
+ * @param {string} id - Loan ID
+ */
+function viewLoanDetails(id) {
+  console.log('=== VIEW LOAN DETAILS ===', id);
+  
+  var loanList = DataManager.isInitialized && DataManager.isInitialized() ? 
+    DataManager.getLoan() : allLoanData;
+  
+  var loan = null;
+  for (var i = 0; i < loanList.length; i++) {
+    if (loanList[i].ID === id) {
+      loan = loanList[i];
+      break;
+    }
+  }
+  
+  if (!loan) {
+    showToast('Không tìm thấy khoản vay', 'error');
+    return;
+  }
+  
+  // Parse details
+  var details = null;
+  try {
+    details = typeof loan['Chi tiết khoản vay'] === 'string' ? 
+      JSON.parse(loan['Chi tiết khoản vay']) : loan['Chi tiết khoản vay'];
+  } catch(e) {
+    showToast('Không thể đọc chi tiết khoản vay', 'error');
+    return;
+  }
+  
+  if (!details || !details.schedule) {
+    showToast('Không có lịch trả nợ', 'error');
+    return;
+  }
+  
+  var schedule = details.schedule;
+  var interestType = details.interestType || 'declining';
+  
+  // Interest type label
+  var interestTypeLabel = interestType === 'declining' ? 'Lãi giảm dần' : 
+    interestType === 'simple' ? 'Lãi đơn' : 'Lãi kép';
+  
+  // Calculate totals
+  var totalPrincipal = 0;
+  var totalInterest = 0;
+  var totalPayment = 0;
+  var paidCount = 0;
+  
+  for (var i = 0; i < schedule.length; i++) {
+    totalPrincipal += schedule[i].principalPayment;
+    totalInterest += schedule[i].interestPayment;
+    totalPayment += schedule[i].totalPayment;
+    if (schedule[i].status === 'paid') paidCount++;
+  }
+  
+  // Build modal HTML
+  var body = 
+    // Loan Info
+    '<div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #3782f4;">' +
+    '<h4 style="margin: 0 0 15px 0; color: #1e40af; font-size: 18px;">' +
+    '<i class="fas fa-info-circle"></i> Thông tin khoản vay' +
+    '</h4>' +
+    
+    '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">' +
+    '<div>' +
+    '<div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Tên khoản vay</div>' +
+    '<div style="font-weight: 600; color: #1f2937; font-size: 15px;">' + loan['Danh mục vay'] + '</div>' +
+    '</div>' +
+    
+    '<div>' +
+    '<div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Giá trị vay</div>' +
+    '<div style="font-weight: 700; color: #e94849; font-size: 16px;">' + formatCurrency(loan['Giá trị vay']) + ' đ</div>' +
+    '</div>' +
+    
+    '<div>' +
+    '<div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Lãi suất</div>' +
+    '<div style="font-weight: 600; color: #f59e0b; font-size: 15px;">' + loan['Lãi suất vay/năm'] + '%/năm</div>' +
+    '</div>' +
+    
+    '<div>' +
+    '<div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Hình thức lãi</div>' +
+    '<div style="font-weight: 600; color: #3782f4; font-size: 15px;">' + interestTypeLabel + '</div>' +
+    '</div>' +
+    
+    '<div>' +
+    '<div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Ngày vay</div>' +
+    '<div style="font-weight: 600; font-size: 15px;">' + formatDate(loan['Ngày vay']) + '</div>' +
+    '</div>' +
+    
+    '<div>' +
+    '<div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Hạn trả</div>' +
+    '<div style="font-weight: 600; font-size: 15px;">' + formatDate(loan['Hạn trả vay']) + '</div>' +
+    '</div>' +
+    
+    '<div>' +
+    '<div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Gốc đã trả</div>' +
+    '<div style="font-weight: 700; color: #24c560; font-size: 16px;">' + formatCurrency(loan['Tiền gốc đã trả']) + ' đ</div>' +
+    '</div>' +
+    
+    '<div>' +
+    '<div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Còn lại</div>' +
+    '<div style="font-weight: 700; color: #e94849; font-size: 16px;">' + formatCurrency(loan['Tiền vay còn lại']) + ' đ</div>' +
+    '</div>' +
+    '</div>' +
+    '</div>' +
+    
+    // Payment Schedule Table
+    '<div style="background: #fef3c7; padding: 20px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #f59e0b;">' +
+    '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">' +
+    '<h4 style="margin: 0; color: #92400e; font-size: 18px;">' +
+    '<i class="fas fa-calendar-alt"></i> Lịch trả nợ (' + schedule.length + ' kỳ)' +
+    '</h4>' +
+    '<div style="font-size: 14px; color: #92400e;">' +
+    '<strong>Đã thanh toán: ' + paidCount + '/' + schedule.length + '</strong>' +
+    '</div>' +
+    '</div>' +
+    
+    '<div class="loan-schedule-table">' +
+    '<table>' +
+    '<thead>' +
+    '<tr>' +
+    '<th class="sticky-period-col" style="text-align: center; width: 50px;">Kỳ</th>' +
+    '<th class="sticky-date-col" style="text-align: left; width: 120px;">Hạn trả</th>' +
+    '<th style="text-align: right; min-width: 100px;">Gốc</th>' +
+    '<th style="text-align: right; min-width: 100px;">Lãi</th>' +
+    '<th style="text-align: right; min-width: 120px;">Tổng trả</th>' +
+    '<th style="text-align: right; min-width: 100px;">Dư nợ</th>' +
+    '<th style="text-align: center; min-width: 100px;">Trạng thái</th>' +
+    '</tr>' +
+    '</thead>' +
+    '<tbody>';
+  
+  for (var i = 0; i < schedule.length; i++) {
+    var period = schedule[i];
+    var isPaid = period.status === 'paid';
+    var rowClass = isPaid ? 'paid-row' : '';
+    
+    body += '<tr class="' + rowClass + '">' +
+      '<td class="sticky-period-col" style="text-align: center;">' + period.period + '</td>' +
+      '<td class="sticky-date-col">' + formatDate(period.dueDate) + '</td>' +
+      '<td style="text-align: right; color: #3782f4; font-weight: 600;">' + formatCurrency(period.principalPayment) + '</td>' +
+      '<td style="text-align: right; color: #f59e0b; font-weight: 600;">' + formatCurrency(period.interestPayment) + '</td>' +
+      '<td style="text-align: right; font-weight: 700;">' + formatCurrency(period.totalPayment) + '</td>' +
+      '<td style="text-align: right; color: #e94849; font-weight: 600;">' + formatCurrency(period.remainingPrincipal) + '</td>' +
+      '<td style="text-align: center;">' +
+      (isPaid ? 
+        '<span class="badge badge-success"><i class="fas fa-check"></i> Đã trả</span>' :
+        '<button class="btn-success btn-sm" onclick="markPaymentInModal(\'' + id + '\', ' + period.period + ')" style="padding: 5px 10px; font-size: 12px;">' +
+        '<i class="fas fa-money-bill-wave"></i> Thanh toán' +
+        '</button>') +
+      '</td>' +
+      '</tr>';
+  }
+  
+  // Totals row
+  body += '<tr style="background: #fff3cd; font-weight: 700; border-top: 3px solid #fbbf24;">' +
+    '<td class="sticky-period-col" style="text-align: center;">Tổng</td>' +
+    '<td class="sticky-date-col"></td>' +
+    '<td style="text-align: right; color: #3782f4;">' + formatCurrency(totalPrincipal) + '</td>' +
+    '<td style="text-align: right; color: #f59e0b;">' + formatCurrency(totalInterest) + '</td>' +
+    '<td style="text-align: right; color: #1f2937;">' + formatCurrency(totalPayment) + '</td>' +
+    '<td colspan="2"></td>' +
+    '</tr>';
+  
+  body += '</tbody></table></div></div>';
+  
+  var footer = '<button class="btn-secondary" onclick="closeModal()"><i class="fas fa-times"></i> Đóng</button>';
+  
+  // Open modal with LARGE class
+  openModal('📋 Chi tiết khoản vay', body, footer);
+  
+  // Add large class to modal after opening
+  setTimeout(function() {
+    var modalContent = document.querySelector('.modal-content');
+    if (modalContent) {
+      modalContent.classList.add('modal-large');
+    }
+  }, 50);
+}
+
+/**
+ * Mark payment as paid from detail modal
+ * @param {string} loanId - Loan ID
+ * @param {number} period - Payment period
+ */
+function markPaymentInModal(loanId, period) {
+  console.log('Mark payment in modal:', loanId, period);
+  
+  // Get loan data
+  var loanList = DataManager.isInitialized && DataManager.isInitialized() ? 
+    DataManager.getLoan() : allLoanData;
+  
+  var loan = null;
+  for (var i = 0; i < loanList.length; i++) {
+    if (loanList[i].ID === loanId) {
+      loan = loanList[i];
+      break;
+    }
+  }
+  
+  if (!loan) {
+    showToast('Không tìm thấy khoản vay', 'error');
+    return;
+  }
+  
+  // Parse details
+  var details = null;
+  try {
+    details = typeof loan['Chi tiết khoản vay'] === 'string' ? 
+      JSON.parse(loan['Chi tiết khoản vay']) : loan['Chi tiết khoản vay'];
+  } catch(e) {
+    showToast('Không thể đọc chi tiết', 'error');
+    return;
+  }
+  
+  // Find payment
+  var payment = null;
+  for (var i = 0; i < details.schedule.length; i++) {
+    if (details.schedule[i].period === period) {
+      payment = details.schedule[i];
+      break;
+    }
+  }
+  
+  if (!payment) {
+    showToast('Không tìm thấy kỳ thanh toán', 'error');
+    return;
+  }
+  
+  // Close detail modal first
+  closeModal();
+  
+  // Wait a bit then open payment confirm modal
+  setTimeout(function() {
+    // Build payment confirm modal
+    var body = '<div style="padding: 20px;">' +
+      '<div style="text-align: center; margin-bottom: 20px;">' +
+      '<i class="fas fa-money-bill-wave" style="font-size: 48px; color: #24c560; margin-bottom: 10px;"></i>' +
+      '<h3 style="margin: 10px 0; color: #1f2937;">Xác nhận thanh toán kỳ ' + payment.period + '</h3>' +
+      '<p style="color: #6b7280;">Khoản vay: <strong>' + loan['Danh mục vay'] + '</strong></p>' +
+      '</div>' +
+      
+      '<div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 20px;">' +
+      '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">' +
+      '<div>' +
+      '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Hạn trả</div>' +
+      '<div style="font-weight: 600; color: #1f2937;">' + formatDate(payment.dueDate) + '</div>' +
+      '</div>' +
+      '<div>' +
+      '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Tiền gốc</div>' +
+      '<div style="font-weight: 600; color: #3782f4;">' + formatCurrency(payment.principalPayment) + ' đ</div>' +
+      '</div>' +
+      '<div>' +
+      '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Tiền lãi</div>' +
+      '<div style="font-weight: 600; color: #f59e0b;">' + formatCurrency(payment.interestPayment) + ' đ</div>' +
+      '</div>' +
+      '<div>' +
+      '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Tổng thanh toán</div>' +
+      '<div style="font-weight: 700; color: #24c560; font-size: 18px;">' + formatCurrency(payment.totalPayment) + ' đ</div>' +
+      '</div>' +
+      '</div>' +
+      '</div>' +
+      
+      '<div style="background: #fffbeb; padding: 12px; border-radius: 8px; border-left: 3px solid #f59e0b;">' +
+      '<p style="margin: 0; color: #92400e; font-size: 14px;">' +
+      '<i class="fas fa-info-circle"></i> Sau khi thanh toán, số dư nợ còn lại sẽ là: <strong>' + 
+      formatCurrency(payment.remainingPrincipal) + ' đ</strong>' +
+      '</p>' +
+      '</div>' +
+      '</div>';
+    
+    var footer = 
+      '<button class="btn-secondary" onclick="closeModal(); setTimeout(function() { viewLoanDetails(\'' + loanId + '\'); }, 300);">Hủy</button>' +
+      '<button class="btn-success" onclick="executeMarkPaymentFromDetail(\'' + loanId + '\', ' + payment.period + ')">' +
+      '<i class="fas fa-check"></i> Xác nhận thanh toán' +
+      '</button>';
+    
+    openModal('💰 Thanh toán kỳ ' + payment.period, body, footer);
+  }, 300);
+}
+
+/**
+ * Execute mark payment from detail modal
+ * @param {string} loanId - Loan ID
+ * @param {number} period - Payment period
+ */
+function executeMarkPaymentFromDetail(loanId, period) {
+  closeModal();
+  showLoading('Đang cập nhật thanh toán...');
+  
+  console.log('Execute mark payment from detail:', loanId, period);
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      console.log('Payment response:', response);
+      
+      if (!response) {
+        hideLoading();
+        showToast('Không nhận được phản hồi từ server', 'error');
+        return;
+      }
+      
+      if (response.success) {
+        reloadLoanData().then(function() {
+          hideLoading();
+          showToast('✅ Đã thanh toán kỳ ' + period + ' thành công!', 'success');
+          
+          // Re-open detail modal
+          setTimeout(function() {
+            viewLoanDetails(loanId);
+          }, 500);
+        }).catch(function(error) {
+          console.error('Reload error:', error);
+          hideLoading();
+          showToast('Cập nhật thành công nhưng không tải lại được dữ liệu', 'warning');
+          setTimeout(function() { location.reload(); }, 2000);
+        });
+      } else {
+        hideLoading();
+        showToast(response.message || 'Thanh toán thất bại', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      console.error('Payment error:', error);
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .handleRequest('markLoanPaymentAsPaid', {loanId: loanId, period: period});
+}
+
+/**
+ * Mark payment from main table (quick payment)
+ * @param {string} loanId - Loan ID
+ */
+function markPayment(loanId) {
+  console.log('Quick mark payment for loan:', loanId);
+  
+  var loanList = DataManager.isInitialized && DataManager.isInitialized() ? 
+    DataManager.getLoan() : allLoanData;
+  
+  var loan = null;
+  for (var i = 0; i < loanList.length; i++) {
+    if (loanList[i].ID === loanId) {
+      loan = loanList[i];
+      break;
+    }
+  }
+  
+  if (!loan) {
+    showToast('Không tìm thấy khoản vay', 'error');
+    return;
+  }
+  
+  // Parse details
+  var details = null;
+  try {
+    details = typeof loan['Chi tiết khoản vay'] === 'string' ? 
+      JSON.parse(loan['Chi tiết khoản vay']) : loan['Chi tiết khoản vay'];
+  } catch(e) {
+    showToast('Không thể đọc chi tiết khoản vay', 'error');
+    return;
+  }
+  
+  if (!details || !details.schedule) {
+    showToast('Không có lịch trả nợ', 'error');
+    return;
+  }
+  
+  // Find next unpaid period
+  var nextPeriod = null;
+  for (var i = 0; i < details.schedule.length; i++) {
+    if (details.schedule[i].status !== 'paid') {
+      nextPeriod = details.schedule[i];
+      break;
+    }
+  }
+  
+  if (!nextPeriod) {
+    showToast('Khoản vay đã trả hết', 'info');
+    return;
+  }
+  
+  // Build payment modal
+  var body = '<div style="padding: 20px;">' +
+    '<div style="text-align: center; margin-bottom: 20px;">' +
+    '<i class="fas fa-money-bill-wave" style="font-size: 48px; color: #24c560; margin-bottom: 10px;"></i>' +
+    '<h3 style="margin: 10px 0; color: #1f2937;">Thanh toán kỳ ' + nextPeriod.period + '</h3>' +
+    '<p style="color: #6b7280;">Khoản vay: <strong>' + loan['Danh mục vay'] + '</strong></p>' +
+    '</div>' +
+    
+    '<div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 20px;">' +
+    '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">' +
+    '<div>' +
+    '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Hạn trả</div>' +
+    '<div style="font-weight: 600; color: #1f2937;">' + formatDate(nextPeriod.dueDate) + '</div>' +
+    '</div>' +
+    '<div>' +
+    '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Tiền gốc</div>' +
+    '<div style="font-weight: 600; color: #3782f4;">' + formatCurrency(nextPeriod.principalPayment) + ' đ</div>' +
+    '</div>' +
+    '<div>' +
+    '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Tiền lãi</div>' +
+    '<div style="font-weight: 600; color: #f59e0b;">' + formatCurrency(nextPeriod.interestPayment) + ' đ</div>' +
+    '</div>' +
+    '<div>' +
+    '<div style="font-size: 12px; color: #6b7280; margin-bottom: 5px;">Tổng thanh toán</div>' +
+    '<div style="font-weight: 700; color: #24c560; font-size: 18px;">' + formatCurrency(nextPeriod.totalPayment) + ' đ</div>' +
+    '</div>' +
+    '</div>' +
+    '</div>' +
+    
+    '<div style="background: #fffbeb; padding: 12px; border-radius: 8px; border-left: 3px solid #f59e0b;">' +
+    '<p style="margin: 0; color: #92400e; font-size: 14px;">' +
+    '<i class="fas fa-info-circle"></i> Sau khi thanh toán, số dư nợ còn lại sẽ là: <strong>' + 
+    formatCurrency(nextPeriod.remainingPrincipal) + ' đ</strong>' +
+    '</p>' +
+    '</div>' +
+    '</div>';
+  
+  var footer = 
+    '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-success" onclick="executeMarkPayment(\'' + loanId + '\', ' + nextPeriod.period + ')">' +
+    '<i class="fas fa-check"></i> Xác nhận thanh toán' +
+    '</button>';
+  
+  openModal('💰 Thanh toán kỳ ' + nextPeriod.period, body, footer);
+}
+
+/**
+ * Execute mark payment
+ * @param {string} loanId - Loan ID
+ * @param {number} period - Payment period
+ */
+function executeMarkPayment(loanId, period) {
+  closeModal();
+  showLoading('Đang cập nhật thanh toán...');
+  
+  console.log('=== EXECUTE MARK PAYMENT ===');
+  console.log('LoanID:', loanId, 'Period:', period);
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      console.log('Mark payment response:', response);
+      
+      // Check response validity
+      if (!response) {
+        hideLoading();
+        showToast('Không nhận được phản hồi từ server', 'error');
+        return;
+      }
+      
+      if (response.success) {
+        console.log('Payment marked successfully');
+        
+        reloadLoanData().then(function() {
+          hideLoading();
+          showToast('✅ Đã thanh toán kỳ ' + period + ' thành công!', 'success');
+        }).catch(function(error) {
+          console.error('Reload error:', error);
+          hideLoading();
+          showToast('Cập nhật thành công nhưng không tải lại được dữ liệu', 'warning');
+          
+          // Force reload page if data manager fails
+          setTimeout(function() {
+            location.reload();
+          }, 2000);
+        });
+      } else {
+        hideLoading();
+        showToast(response.message || 'Thanh toán thất bại', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      console.error('Mark payment failure:', error);
+      hideLoading();
+      showToast('Lỗi: ' + error.message, 'error');
+    })
+    .handleRequest('markLoanPaymentAsPaid', {loanId: loanId, period: period});
+}
+
+// ========================================
+// LOAN NOTIFICATIONS - DUE DATE ALERTS
+// ========================================
+
+/**
+ * Check and display loan notifications
+ * Called when loan page loads
+ */
+async function checkLoanNotifications() {
+  try {
+    console.log('Checking loan notifications...');
+    
+    // Get alert days from settings (default 7 days)
+    var alertDays = parseInt(localStorage.getItem('loanAlertDays') || '7');
+    
+    const response = await new Promise(function(resolve, reject) {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject)
+        .handleRequest('getLoanNotifications', {daysBeforeDue: alertDays});
+    });
+    
+    if (!response.success) {
+      console.log('No notifications or error:', response.message);
+      return;
+    }
+    
+    var notifications = response.data || [];
+    
+    console.log('Loan notifications:', notifications.length);
+    
+    if (notifications.length === 0) {
+      // No notifications
+      var notifContainer = document.getElementById('loanNotifications');
+      if (notifContainer) {
+        notifContainer.innerHTML = '';
+      }
+      return;
+    }
+    
+    // Display notifications
+    displayLoanNotifications(notifications);
+    
+  } catch (error) {
+    console.error('Check notifications error:', error);
+  }
+}
+
+/**
+ * Display loan notifications in UI
+ * @param {Array} notifications - Array of notifications
+ */
+function displayLoanNotifications(notifications) {
+  var notifContainer = document.getElementById('loanNotifications');
+  if (!notifContainer) return;
+  
+  var html = '<div style="background: #fff7ed; border: 2px solid #fb923c; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(251, 146, 60, 0.15);">' +
+    '<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">' +
+    '<h3 style="margin: 0; color: #c2410c; font-size: 18px;">' +
+    '<i class="fas fa-bell" style="margin-right: 8px; animation: ring 2s infinite;"></i>' +
+    'Thông báo khoản vay sắp đến hạn (' + notifications.length + ')' +
+    '</h3>' +
+    '<button class="btn-secondary btn-sm" onclick="openLoanNotificationSettings()" title="Cài đặt cảnh báo">' +
+    '<i class="fas fa-cog"></i>' +
+    '</button>' +
+    '</div>';
+  
+  // Sort by urgency (urgent first)
+  notifications.sort(function(a, b) {
+    if (a.type === 'urgent' && b.type !== 'urgent') return -1;
+    if (a.type !== 'urgent' && b.type === 'urgent') return 1;
+    return a.daysUntilDue - b.daysUntilDue;
+  });
+  
+  html += '<div style="display: grid; gap: 12px;">';
+  
+  for (var i = 0; i < notifications.length; i++) {
+    var notif = notifications[i];
+    var isUrgent = notif.type === 'urgent';
+    var bgColor = isUrgent ? '#fef2f2' : '#fffbeb';
+    var borderColor = isUrgent ? '#f87171' : '#fbbf24';
+    var iconColor = isUrgent ? '#dc2626' : '#f59e0b';
+    var icon = isUrgent ? 'fa-exclamation-triangle' : 'fa-clock';
+    
+    html += '<div style="background: ' + bgColor + '; border-left: 4px solid ' + borderColor + '; padding: 15px; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 15px;">' +
+      '<div style="flex: 1;">' +
+      '<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">' +
+      '<i class="fas ' + icon + '" style="color: ' + iconColor + '; font-size: 20px;"></i>' +
+      '<strong style="color: #1f2937; font-size: 15px;">' + notif.loanName + '</strong>' +
+      '</div>' +
+      '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; font-size: 13px; color: #4b5563;">' +
+      '<div>Kỳ: <strong>' + notif.period + '</strong></div>' +
+      '<div>Hạn trả: <strong>' + formatDate(notif.dueDate) + '</strong></div>' +
+      '<div>Số tiền: <strong style="color: ' + iconColor + ';">' + formatCurrency(notif.amount) + ' đ</strong></div>' +
+      '<div>Còn: <strong style="color: ' + (notif.daysUntilDue <= 3 ? '#dc2626' : '#f59e0b') + ';">' + notif.daysUntilDue + ' ngày</strong></div>' +
+      '</div>' +
+      '</div>' +
+      '<div style="display: flex; gap: 8px;">' +
+      '<button class="btn-primary btn-sm" onclick="viewLoanDetails(\'' + notif.loanId + '\')" title="Xem chi tiết">' +
+      '<i class="fas fa-eye"></i>' +
+      '</button>' +
+      '<button class="btn-success btn-sm" onclick="markPayment(\'' + notif.loanId + '\')" title="Thanh toán">' +
+      '<i class="fas fa-money-bill-wave"></i>' +
+      '</button>' +
+      '</div>' +
+      '</div>';
+  }
+  
+  html += '</div></div>';
+  
+  // Add animation keyframes
+  html += '<style>' +
+    '@keyframes ring {' +
+    '0%, 100% { transform: rotate(0deg); }' +
+    '10%, 30% { transform: rotate(-10deg); }' +
+    '20%, 40% { transform: rotate(10deg); }' +
+    '}' +
+    '</style>';
+  
+  notifContainer.innerHTML = html;
+}
+
+/**
+ * Open notification settings modal
+ */
+function openLoanNotificationSettings() {
+  var currentDays = parseInt(localStorage.getItem('loanAlertDays') || '7');
+  
+  var body = '<div style="padding: 20px;">' +
+    '<div style="text-align: center; margin-bottom: 20px;">' +
+    '<i class="fas fa-bell" style="font-size: 48px; color: #3782f4; margin-bottom: 10px;"></i>' +
+    '<p style="color: #6b7280;">Cài đặt thời gian cảnh báo trước khi đến hạn thanh toán</p>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-calendar-alt"></i> Cảnh báo trước (ngày)</label>' +
+    '<input type="number" id="loanAlertDays" class="form-control" value="' + currentDays + '" min="1" max="30">' +
+    '<small style="color: #6b7280;">Hệ thống sẽ cảnh báo các khoản vay đến hạn trong X ngày tới</small>' +
+    '</div>' +
+    
+    '<div style="background: #f0f9ff; padding: 12px; border-radius: 8px; margin-top: 15px;">' +
+    '<p style="margin: 0; color: #1e40af; font-size: 13px;">' +
+    '<i class="fas fa-info-circle"></i> Gợi ý:' +
+    '</p>' +
+    '<ul style="margin: 8px 0 0 20px; padding: 0; font-size: 13px; color: #1e40af;">' +
+    '<li>3-5 ngày: Cảnh báo khẩn cấp</li>' +
+    '<li>7 ngày: Khuyên dùng (mặc định)</li>' +
+    '<li>14-30 ngày: Cảnh báo sớm</li>' +
+    '</ul>' +
+    '</div>' +
+    '</div>';
+  
+  var footer = 
+    '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-primary" onclick="saveLoanNotificationSettings()">' +
+    '<i class="fas fa-save"></i> Lưu cài đặt' +
+    '</button>';
+  
+  openModal('⚙️ Cài đặt cảnh báo', body, footer);
+}
+
+/**
+ * Save notification settings
+ */
+function saveLoanNotificationSettings() {
+  var days = parseInt(document.getElementById('loanAlertDays').value);
+  
+  if (!days || days < 1 || days > 30) {
+    showToast('Vui lòng nhập số ngày từ 1-30', 'error');
+    return;
+  }
+  
+  localStorage.setItem('loanAlertDays', days);
+  closeModal();
+  showToast('✅ Đã lưu cài đặt cảnh báo: ' + days + ' ngày', 'success');
+  
+  // Reload notifications with new settings
+  checkLoanNotifications();
+}
+
+// ========================================
+// LOAN IMPORT/EXPORT
+// ========================================
+
+// ========================================
+// EXPORT LOAN TO EXCEL
+// ========================================
+
+/**
+ * Export loan data to Excel
+ */
+function exportLoanToExcel() {
+  console.log('Exporting loan to Excel...');
+  
+  if (!loanFilteredData || loanFilteredData.length === 0) {
+    showToast('Không có dữ liệu để xuất', 'warning');
+    return;
+  }
+  
+  showLoading('Đang tạo file Excel...');
+  
+  try {
+    // Prepare data
+    var headers = [
+      'Danh mục vay',
+      'Ngày vay',
+      'Hạn trả vay',
+      'Giá trị vay',
+      'Lãi suất (%/năm)',
+      'Gốc/tháng',
+      'Lãi/tháng',
+      'Gốc đã trả',
+      'Còn lại',
+      'Tình trạng'
+    ];
+    
+    var data = [];
+    
+    for (var i = 0; i < loanFilteredData.length; i++) {
+      var item = loanFilteredData[i];
+      
+      var statusText = item['Tình trạng'] === 'completed' ? 'Đã trả hết' : 
+                      item['Tình trạng'] === 'overdue' ? 'Quá hạn' : 'Đang vay';
+      
+      data.push([
+        item['Danh mục vay'] || '',
+        formatDate(item['Ngày vay']),
+        formatDate(item['Hạn trả vay']),
+        parseCurrency(item['Giá trị vay']),
+        parseFloat(item['Lãi suất vay/năm']) || 0,
+        parseCurrency(item['Tiền gốc trả hàng tháng']),
+        parseCurrency(item['Tiền lãi trả hàng tháng']),
+        parseCurrency(item['Tiền gốc đã trả']),
+        parseCurrency(item['Tiền vay còn lại']),
+        statusText
+      ]);
+    }
+    
+    // Calculate totals
+    var totalPrincipal = 0;
+    var totalMonthlyPrincipal = 0;
+    var totalMonthlyInterest = 0;
+    var totalPaidPrincipal = 0;
+    var totalRemaining = 0;
+    
+    for (var i = 0; i < loanFilteredData.length; i++) {
+      totalPrincipal += parseCurrency(loanFilteredData[i]['Giá trị vay']);
+      totalMonthlyPrincipal += parseCurrency(loanFilteredData[i]['Tiền gốc trả hàng tháng']);
+      totalMonthlyInterest += parseCurrency(loanFilteredData[i]['Tiền lãi trả hàng tháng']);
+      totalPaidPrincipal += parseCurrency(loanFilteredData[i]['Tiền gốc đã trả']);
+      totalRemaining += parseCurrency(loanFilteredData[i]['Tiền vay còn lại']);
+    }
+    
+    // Add totals row
+    data.push([
+      'TỔNG CỘNG',
+      '',
+      '',
+      totalPrincipal,
+      '',
+      totalMonthlyPrincipal,
+      totalMonthlyInterest,
+      totalPaidPrincipal,
+      totalRemaining,
+      loanFilteredData.length + ' khoản'
+    ]);
+    
+    // Create workbook
+    var ws_data = [headers].concat(data);
+    var ws = XLSX.utils.aoa_to_sheet(ws_data);
+    
+    // Set column widths
+    ws['!cols'] = [
+      {wch: 25}, // Danh mục vay
+      {wch: 12}, // Ngày vay
+      {wch: 12}, // Hạn trả
+      {wch: 15}, // Giá trị vay
+      {wch: 12}, // Lãi suất
+      {wch: 15}, // Gốc/tháng
+      {wch: 15}, // Lãi/tháng
+      {wch: 15}, // Gốc đã trả
+      {wch: 15}, // Còn lại
+      {wch: 12}  // Tình trạng
+    ];
+    
+    // Style header row
+    var range = XLSX.utils.decode_range(ws['!ref']);
+    for (var C = range.s.c; C <= range.e.c; ++C) {
+      var address = XLSX.utils.encode_col(C) + "1";
+      if (!ws[address]) continue;
+      ws[address].s = {
+        font: {bold: true, color: {rgb: "FFFFFF"}},
+        fill: {fgColor: {rgb: "667eea"}},
+        alignment: {horizontal: "center", vertical: "center"}
+      };
+    }
+    
+    // Style totals row
+    var lastRow = range.e.r + 1;
+    for (var C = range.s.c; C <= range.e.c; ++C) {
+      var address = XLSX.utils.encode_col(C) + lastRow;
+      if (!ws[address]) continue;
+      ws[address].s = {
+        font: {bold: true, color: {rgb: "FFFFFF"}},
+        fill: {fgColor: {rgb: "764ba2"}},
+        alignment: {horizontal: "center"}
+      };
+    }
+    
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Khoản vay");
+    
+    // Generate filename
+    var filename = 'Khoan_vay_' + formatDate(new Date()).replace(/\//g, '-') + '.xlsx';
+    
+    // Download
+    XLSX.writeFile(wb, filename);
+    
+    hideLoading();
+    showToast('✅ Đã xuất ' + loanFilteredData.length + ' khoản vay ra Excel', 'success');
+    
+  } catch (error) {
+    console.error('Export error:', error);
+    hideLoading();
+    showToast('Lỗi xuất Excel: ' + error.message, 'error');
+  }
+}
+
+/**
+ * Download loan template Excel
+ */
+function downloadLoanTemplate() {
+  console.log('Downloading loan template...');
+  
+  // Create template data
+  var headers = [
+    'Danh mục vay',
+    'Ngày vay',
+    'Giá trị vay',
+    'Lãi suất vay/năm (%)',
+    'Kỳ hạn (tháng)',
+    'Hình thức lãi'
+  ];
+  
+  var sampleData = [
+    ['Vay mua nhà', '2025-01-01', '500000000', '8.5', '240', 'declining'],
+    ['Vay tiêu dùng', '2025-01-15', '50000000', '12', '36', 'simple'],
+    ['Vay mua xe', '2025-02-01', '200000000', '9', '60', 'declining']
+  ];
+  
+  var instructions = [
+    [''],
+    ['HƯỚNG DẪN NHẬP LIỆU:'],
+    ['1. Danh mục vay: Tên khoản vay (VD: Vay mua nhà, Vay tiêu dùng)'],
+    ['2. Ngày vay: Định dạng YYYY-MM-DD (VD: 2025-01-01)'],
+    ['3. Giá trị vay: Số tiền vay (VD: 100000000 = 100 triệu)'],
+    ['4. Lãi suất: Lãi suất năm (VD: 8.5 nghĩa là 8.5%/năm)'],
+    ['5. Kỳ hạn: Số tháng (VD: 12, 24, 36, 60, 240)'],
+    ['6. Hình thức lãi: declining (lãi giảm dần), simple (lãi đơn), compound (lãi kép)'],
+    [''],
+    ['LƯU Ý:'],
+    ['- Không được để trống các cột bắt buộc'],
+    ['- Giá trị vay phải > 0'],
+    ['- Lãi suất phải từ 0-100'],
+    ['- Kỳ hạn phải từ 1-360 tháng'],
+    ['- Hình thức lãi khuyên dùng: declining (phổ biến nhất)']
+  ];
+  
+  // Build workbook
+  var ws_data = [headers].concat(sampleData).concat(instructions);
+  var ws = XLSX.utils.aoa_to_sheet(ws_data);
+  
+  // Set column widths
+  ws['!cols'] = [
+    {wch: 25}, // Danh mục vay
+    {wch: 15}, // Ngày vay
+    {wch: 15}, // Giá trị vay
+    {wch: 20}, // Lãi suất
+    {wch: 15}, // Kỳ hạn
+    {wch: 20}  // Hình thức lãi
+  ];
+  
+  // Style header row
+  var range = XLSX.utils.decode_range(ws['!ref']);
+  for (var C = range.s.c; C <= range.e.c; ++C) {
+    var address = XLSX.utils.encode_col(C) + "1";
+    if (!ws[address]) continue;
+    ws[address].s = {
+      font: {bold: true},
+      fill: {fgColor: {rgb: "3782f4"}},
+      alignment: {horizontal: "center"}
+    };
+  }
+  
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Khoản vay");
+  
+  // Download
+  XLSX.writeFile(wb, 'Mau_Khoan_vay_' + formatDate(new Date()) + '.xlsx');
+  
+  showToast('✅ Đã tải xuống file mẫu', 'success');
+}
+
+/**
+ * Open import loan modal
+ */
+function openLoanImportModal() {
+  var body = '<div style="padding: 20px;">' +
+    '<div style="text-align: center; margin-bottom: 20px;">' +
+    '<i class="fas fa-file-import" style="font-size: 48px; color: #3782f4; margin-bottom: 10px;"></i>' +
+    '<h3 style="margin: 10px 0; color: #1f2937;">Import khoản vay từ Excel</h3>' +
+    '</div>' +
+    
+    '<div class="form-group">' +
+    '<label><i class="fas fa-file-excel"></i> Chọn file Excel</label>' +
+    '<input type="file" id="loanImportFile" class="form-control" accept=".xlsx,.xls" ' +
+    'onchange="handleLoanFileSelect(event)">' +
+    '<small style="color: #6b7280;">Chấp nhận file .xlsx, .xls</small>' +
+    '</div>' +
+    
+    '<div style="background: #fffbeb; padding: 12px; border-radius: 8px; border-left: 3px solid #f59e0b; margin-top: 15px;">' +
+    '<p style="margin: 0 0 8px 0; color: #92400e; font-weight: 600;"><i class="fas fa-lightbulb"></i> Lưu ý:</p>' +
+    '<ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #78350f;">' +
+    '<li>File phải có đúng cấu trúc template</li>' +
+    '<li>Dữ liệu bắt đầu từ dòng 2 (dòng 1 là header)</li>' +
+    '<li>Hệ thống sẽ tự động tính lịch trả nợ</li>' +
+    '<li>Các khoản vay bị lỗi sẽ bị bỏ qua</li>' +
+    '</ul>' +
+    '</div>' +
+    
+    '<div id="importPreview" style="margin-top: 15px;"></div>' +
+    '</div>';
+  
+  var footer = 
+    '<button class="btn-secondary" onclick="closeModal()">Hủy</button>' +
+    '<button class="btn-warning" onclick="downloadLoanTemplate()" style="margin-right: auto;">' +
+    '<i class="fas fa-download"></i> Tải file mẫu' +
+    '</button>' +
+    '<button id="btnImportLoan" class="btn-primary" onclick="processLoanImport()" disabled>' +
+    '<i class="fas fa-upload"></i> Import' +
+    '</button>';
+  
+  openModal('📥 Import khoản vay', body, footer);
+}
+
+/**
+ * Handle file select for import
+ * @param {Event} event - File input change event
+ */
+function handleLoanFileSelect(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  
+  console.log('File selected:', file.name);
+  
+  var reader = new FileReader();
+  
+  reader.onload = function(e) {
+    try {
+      var data = new Uint8Array(e.target.result);
+      var workbook = XLSX.read(data, {type: 'array'});
+      
+      // Get first sheet
+      var firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      var jsonData = XLSX.utils.sheet_to_json(firstSheet, {header: 1});
+      
+      console.log('Excel data:', jsonData);
+      
+      // Validate and preview
+      var validRecords = validateLoanImportData(jsonData);
+      
+      if (validRecords.length === 0) {
+        showToast('Không có dữ liệu hợp lệ để import', 'error');
+        return;
+      }
+      
+      // Store for import
+      window.loanImportData = validRecords;
+      
+      // Show preview
+      displayLoanImportPreview(validRecords);
+      
+      // Enable import button
+      document.getElementById('btnImportLoan').disabled = false;
+      
+    } catch (error) {
+      console.error('Read file error:', error);
+      showToast('Lỗi đọc file: ' + error.message, 'error');
+    }
+  };
+  
+  reader.readAsArrayBuffer(file);
+}
+
+/**
+ * Validate loan import data
+ * @param {Array} data - Raw Excel data
+ * @return {Array} Valid records
+ */
+function validateLoanImportData(data) {
+  if (!data || data.length < 2) return [];
+  
+  var headers = data[0];
+  var validRecords = [];
+  
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    
+    // Skip empty rows
+    if (!row || row.length === 0 || !row[0]) continue;
+    
+    try {
+      var record = {
+        'Danh mục vay': row[0] ? String(row[0]).trim() : '',
+        'Ngày vay': row[1] ? String(row[1]).trim() : '',
+        'Giá trị vay': parseFloat(row[2]) || 0,
+        'Lãi suất vay/năm': parseFloat(row[3]) || 0,
+        'Kỳ hạn': parseInt(row[4]) || 0,
+        'Hình thức lãi': row[5] ? String(row[5]).trim().toLowerCase() : 'declining'
+      };
+      
+      // Validate
+      if (!record['Danh mục vay']) continue;
+      if (!record['Ngày vay'] || !isValidDate(record['Ngày vay'])) continue;
+      if (record['Giá trị vay'] <= 0) continue;
+      if (record['Lãi suất vay/năm'] < 0 || record['Lãi suất vay/năm'] > 100) continue;
+      if (record['Kỳ hạn'] < 1 || record['Kỳ hạn'] > 360) continue;
+      
+      // Validate interest type
+      var validTypes = ['declining', 'simple', 'compound'];
+      if (validTypes.indexOf(record['Hình thức lãi']) === -1) {
+        record['Hình thức lãi'] = 'declining';
+      }
+      
+      validRecords.push(record);
+      
+    } catch (e) {
+      console.error('Parse row error:', e);
+      continue;
+    }
+  }
+  
+  return validRecords;
+}
+
+/**
+ * Display import preview
+ * @param {Array} records - Valid records
+ */
+function displayLoanImportPreview(records) {
+  var html = '<div style="background: #f0fdf4; padding: 15px; border-radius: 8px; border-left: 3px solid #24c560;">' +
+    '<p style="margin: 0; color: #166534; font-weight: 600;">' +
+    '<i class="fas fa-check-circle"></i> Tìm thấy ' + records.length + ' khoản vay hợp lệ' +
+    '</p>' +
+    '<ul style="margin: 10px 0 0 20px; padding: 0; font-size: 13px; color: #166534;">';
+  
+  for (var i = 0; i < Math.min(records.length, 5); i++) {
+    html += '<li>' + records[i]['Danh mục vay'] + ' - ' + 
+      formatCurrency(records[i]['Giá trị vay']) + ' đ - ' +
+      records[i]['Lãi suất vay/năm'] + '%/năm - ' +
+      records[i]['Kỳ hạn'] + ' tháng' +
+      '</li>';
+  }
+  
+  if (records.length > 5) {
+    html += '<li>... và ' + (records.length - 5) + ' khoản vay khác</li>';
+  }
+  
+  html += '</ul></div>';
+  
+  document.getElementById('importPreview').innerHTML = html;
+}
+
+/**
+ * Process loan import
+ */
+async function processLoanImport() {
+  if (!window.loanImportData || window.loanImportData.length === 0) {
+    showToast('Không có dữ liệu để import', 'error');
+    return;
+  }
+  
+  closeModal();
+  showLoading('Đang import ' + window.loanImportData.length + ' khoản vay...');
+  
+  var successCount = 0;
+  var errorCount = 0;
+  
+  try {
+    for (var i = 0; i < window.loanImportData.length; i++) {
+      var record = window.loanImportData[i];
+      
+      try {
+        // Calculate schedule
+        const scheduleResponse = await new Promise(function(resolve, reject) {
+          google.script.run
+            .withSuccessHandler(resolve)
+            .withFailureHandler(reject)
+            .handleRequest('calculateLoanSchedule', {
+              loanData: {
+                principal: record['Giá trị vay'],
+                annualRate: record['Lãi suất vay/năm'],
+                months: record['Kỳ hạn'],
+                interestType: record['Hình thức lãi'],
+                startDate: record['Ngày vay']
+              }
+            });
+        });
+        
+        if (!scheduleResponse.success) {
+          errorCount++;
+          continue;
+        }
+        
+        var schedule = scheduleResponse.data;
+        var firstPeriod = schedule[0];
+        var lastPeriod = schedule[schedule.length - 1];
+        
+        // Build record
+        var loanData = {
+          'ID': generateId('KV'),
+          'UserID': currentUser.userId,
+          'Ngày vay': record['Ngày vay'],
+          'Hạn trả vay': lastPeriod.dueDate,
+          'Danh mục vay': record['Danh mục vay'],
+          'Giá trị vay': record['Giá trị vay'],
+          'Lãi suất vay/năm': record['Lãi suất vay/năm'],
+          'Tiền gốc trả hàng tháng': firstPeriod.principalPayment,
+          'Tiền lãi trả hàng tháng': firstPeriod.interestPayment,
+          'Tiền gốc đã trả': 0,
+          'Tiền vay còn lại': record['Giá trị vay'],
+          'Tình trạng': 'active',
+          'Chi tiết khoản vay': JSON.stringify({
+            months: record['Kỳ hạn'],
+            interestType: record['Hình thức lãi'],
+            schedule: schedule,
+            createdAt: new Date().toISOString()
+          })
+        };
+        
+        // Save
+        const saveResponse = await new Promise(function(resolve, reject) {
+          google.script.run
+            .withSuccessHandler(resolve)
+            .withFailureHandler(reject)
+            .handleRequest('createRecord', {sheetName: 'Khoản vay', data: loanData});
+        });
+        
+        if (saveResponse.success) {
+          successCount++;
+        } else {
+          errorCount++;
+        }
+        
+      } catch (e) {
+        console.error('Import record error:', e);
+        errorCount++;
+      }
+    }
+    
+    // Reload data
+    await reloadLoanData();
+    
+    hideLoading();
+    
+    var message = 'Import hoàn tất: ' + successCount + ' thành công';
+    if (errorCount > 0) {
+      message += ', ' + errorCount + ' thất bại';
+    }
+    
+    showToast('✅ ' + message, successCount > 0 ? 'success' : 'warning');
+    
+    // Clear import data
+    window.loanImportData = null;
+    
+  } catch (error) {
+    console.error('Import error:', error);
+    hideLoading();
+    showToast('Lỗi import: ' + error.message, 'error');
+  }
+}
+
+</script>
